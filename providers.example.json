@@ -1,0 +1,29 @@
+{
+  "providers": [
+    { "name": "groq", "model_heavy": "openai/gpt-oss-120b" },
+    { "name": "cerebras", "enabled": false },
+    {
+      "name": "nvidia",
+      "model_heavy": "nvidia/nemotron-3-ultra-550b-a55b",
+      "extra_models": ["nvidia/nemotron-3.5-super-vl-120b-a12b"],
+      "model_options": {
+        "nvidia/nemotron-3-ultra-550b-a55b": { "extra_body": { "chat_template_kwargs": { "enable_thinking": false } } }
+      },
+      "max_concurrency": 10,
+      "min_interval_s": 2
+    },
+    {
+      "name": "monprovider",
+      "label": "Mon provider",
+      "env_key": "MONPROVIDER_API_KEY",
+      "base_url": "https://api.exemple.com/v1",
+      "model_heavy": "gros-modele",
+      "model_light": "petit-modele",
+      "supports_tools": true,
+      "timeout": 30,
+      "quota_header": "x-ratelimit-remaining-tokens",
+      "quota_min": 1000
+    }
+  ],
+  "order": ["monprovider"]
+}
