@@ -183,7 +183,7 @@
     if (open.has(name)) {
       r.detail.hidden = false;
       r.line.setAttribute("aria-expanded", "true");
-      const content = detailContent(name, p);
+      const content = detailContent(name, p).filter(Boolean);   // un null deviendrait le texte « null »
       const sig = JSON.stringify(p, (k, v) => (k === "stats" || k === "limits_age_s" ? undefined : v)) + p.stats.tokens + p.stats.calls_last_minute;
       if (r.sig !== sig) { r.detail.replaceChildren(...content); r.sig = sig; }
     }
