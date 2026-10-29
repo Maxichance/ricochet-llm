@@ -1,0 +1,30 @@
+name: Provider or model request
+description: Suggest a provider, a model, or another API format
+labels: [enhancement]
+body:
+  - type: input
+    id: provider
+    attributes:
+      label: Provider and model
+    validations:
+      required: true
+  - type: input
+    id: docs
+    attributes:
+      label: Documentation link
+      description: The page describing the API and the free tier.
+  - type: dropdown
+    id: format
+    attributes:
+      label: API format
+      options:
+        - OpenAI-compatible
+        - Native (needs an adapter)
+        - Not sure
+    validations:
+      required: true
+  - type: textarea
+    id: limits
+    attributes:
+      label: Free tier and limits
+      description: Quotas, renewal, card required or not, terms of use.

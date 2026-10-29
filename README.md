@@ -1,8 +1,8 @@
 <div align="center">
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/img/logo-wordmark-dark.png">
-  <img src="docs/img/logo-wordmark.png" alt="ricochet-llm" width="440">
+  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/Maxichance/ricochet-llm/main/docs/img/logo-wordmark-dark.png">
+  <img src="https://raw.githubusercontent.com/Maxichance/ricochet-llm/main/docs/img/logo-wordmark.png" alt="ricochet-llm" width="440">
 </picture>
 
 **One call. Several free APIs. No quota ever runs dry.**
@@ -18,7 +18,7 @@ The LLM router that bounces from one free provider to the next: quota hit, model
 
 <br>
 
-<img src="docs/img/dashboard.png" alt="Ricochet dashboard: status of each provider, quotas, test console and event log" width="860">
+<img src="https://raw.githubusercontent.com/Maxichance/ricochet-llm/main/docs/img/dashboard.png" alt="Ricochet dashboard: status of each provider, quotas, test console and event log" width="860">
 
 <sub>The dashboard (demo data): each provider's quota, pauses, a console showing the live failover, and the event log.</sub>
 
@@ -162,7 +162,7 @@ A provider without a key is simply ignored. `NVIDIANIM_API_KEY_EXPIRES=YYYY-MM-D
 <details>
 <summary><b>See a provider's details in the dashboard</b></summary>
 <br>
-<img src="docs/img/providers.png" alt="Expanded rows: models, quota gauges, pause with the last error and a resume button" width="820">
+<img src="https://raw.githubusercontent.com/Maxichance/ricochet-llm/main/docs/img/providers.png" alt="Expanded rows: models, quota gauges, pause with the last error and a resume button" width="820">
 </details>
 
 > **Free tiers change fast** (models retired, limits changed). Test a model with a real call before configuring it: `ricochet-llm models <provider>`.

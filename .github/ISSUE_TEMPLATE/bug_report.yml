@@ -1,0 +1,32 @@
+name: Bug report
+description: Something does not work as documented
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, what you got.
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Output or log lines
+      description: Remove any key or personal data before pasting.
+      render: text
+  - type: input
+    id: version
+    attributes:
+      label: ricochet-llm version
+      placeholder: "0.5.0"
+  - type: input
+    id: env
+    attributes:
+      label: Python and OS
+      placeholder: "Python 3.12, Windows 11"
+  - type: input
+    id: providers
+    attributes:
+      label: Providers involved
+      placeholder: "groq, gemini"
