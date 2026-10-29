@@ -1,6 +1,9 @@
 <div align="center">
 
-<img src="docs/img/banner.png" alt="ricochet-llm" width="560">
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/img/logo-wordmark-dark.png">
+  <img src="docs/img/logo-wordmark.png" alt="ricochet-llm" width="440">
+</picture>
 
 **Un seul appel. Plusieurs API gratuites. Zéro quota épuisé.**
 
