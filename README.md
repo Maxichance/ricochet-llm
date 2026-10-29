@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="https://raw.githubusercontent.com/Maxichance/ricochet-llm/main/docs/img/banner.png" alt="ricochet-llm" width="560">
+<img src="docs/img/banner.png" alt="ricochet-llm" width="560">
 
 **Un seul appel. Plusieurs API gratuites. Zéro quota épuisé.**
 
@@ -15,7 +15,7 @@ Le routeur LLM qui rebondit d'un provider gratuit à l'autre : quota atteint, mo
 
 <br>
 
-<img src="https://raw.githubusercontent.com/Maxichance/ricochet-llm/main/docs/img/dashboard.png" alt="Tableau de bord de Ricochet : état de chaque provider, quotas, console de test et journal" width="860">
+<img src="docs/img/dashboard.png" alt="Tableau de bord de Ricochet : état de chaque provider, quotas, console de test et journal" width="860">
 
 <sub>Le tableau de bord (données de démonstration) : quota de chaque provider, pauses, console avec la bascule en direct, journal.</sub>
 
@@ -159,7 +159,7 @@ Un provider sans clé est simplement ignoré. `NVIDIANIM_API_KEY_EXPIRES=AAAA-MM
 <details>
 <summary><b>Voir le détail d'un provider dans le tableau de bord</b></summary>
 <br>
-<img src="https://raw.githubusercontent.com/Maxichance/ricochet-llm/main/docs/img/providers.png" alt="Lignes dépliées : modèles, jauges de quota, pause avec dernière erreur et bouton de reprise" width="820">
+<img src="docs/img/providers.png" alt="Lignes dépliées : modèles, jauges de quota, pause avec dernière erreur et bouton de reprise" width="820">
 </details>
 
 > **Les offres gratuites changent vite** (modèles retirés, limites modifiées). Testez un modèle par un vrai appel avant de le configurer : `ricochet-llm models <provider>`.
