@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "ricochet-llm"
 version = "0.5.0"
-description = "Routeur LLM multi-providers free tier avec bascule automatique et tableau de bord"
+description = "Multi-provider free-tier LLM router with automatic failover and a dashboard"
 readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE"]
@@ -26,7 +26,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-server = ["fastapi", "uvicorn"]          # tableau de bord web : pip install ricochet-llm[server]
+server = ["fastapi", "uvicorn"]          # web dashboard: pip install ricochet-llm[server]
 dev = ["httpx", "fastapi", "uvicorn"]
 
 [project.urls]
@@ -48,7 +48,7 @@ target-version = "py39"
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "B"]
-ignore = ["E501"]          # le français accentué et les tableaux de données dépassent parfois : on garde la lisibilité
+ignore = ["E501"]          # long data tables and accented strings sometimes exceed the limit: we favor readability
 
 [tool.ruff.lint.per-file-ignores]
-"tests/*" = ["E402"]       # sys.path est ajusté avant les imports du paquet
+"tests/*" = ["E402"]       # sys.path is adjusted before the package imports

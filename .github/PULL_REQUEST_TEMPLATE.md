@@ -1,9 +1,9 @@
-## Changement
+## Change
 
-<!-- Quoi et pourquoi, en quelques phrases. -->
+<!-- What and why, in a few sentences. -->
 
-## Vérifications
+## Checks
 
-- [ ] `ruff check .` et les tests passent
-- [ ] Aucune clé, aucun `.env`, aucune donnée personnelle
-- [ ] Je publie ma contribution sous licence MIT
+- [ ] `ruff check .` and the tests pass
+- [ ] No keys, no `.env`, no personal data
+- [ ] I release my contribution under the MIT license

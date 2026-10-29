@@ -1,6 +1,6 @@
 """
-Nettoyage des réponses : les petits modèles laissent parfois un tool call en texte brut.
-Fonctions pures (aucun état), donc testables seules.
+Response cleaning: small models sometimes leave a tool call as plain text.
+Pure functions (no state), so they can be tested alone.
 """
 import json
 import re
@@ -16,8 +16,8 @@ _THINK_BLOCK = re.compile(r'<think>.*?</think>', re.DOTALL)
 
 
 def strip_think(text: str) -> str:
-    """Retire les blocs <think>…</think> que certains modèles laissent dans `content` : ce n'est pas la réponse.
-    Un bloc jamais refermé (réponse coupée) est conservé : on ne devine pas où le raisonnement s'arrête."""
+    """Removes the <think>…</think> blocks some models leave in `content`: they are not the answer.
+    A block that is never closed (truncated response) is kept: we do not guess where the reasoning stops."""
     return _THINK_BLOCK.sub("", text or "").strip()
 
 
@@ -30,8 +30,8 @@ def looks_like_tool_call(obj, tool_names: Iterable[str]) -> bool:
 
 
 def strip_tool_artifacts(text: str, tool_names: Iterable[str]) -> str:
-    """Retire uniquement les tool calls qui ont fuité en texte (JSON complet reconnu ou balises
-    <function=…>), jamais le reste : le code et le JSON légitimes de la réponse sont conservés."""
+    """Removes only the tool calls that leaked as text (recognized complete JSON or <function=…>
+    tags), never anything else: legitimate code and JSON in the response are kept."""
     names = set(tool_names)
     out, i, removed = [], 0, False
     while True:

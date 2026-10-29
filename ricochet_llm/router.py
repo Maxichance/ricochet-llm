@@ -1,10 +1,10 @@
 """
-Moteur du routeur LLM multi-providers free tier.
-Choisit un provider, bascule sur quota épuisé / panne, exécute la boucle agentique (tool calling),
-et tient l'état observable (quotas, cooldowns, statistiques, journal) affiché par l'interface.
+Core of the multi-provider free-tier LLM router.
+Picks a provider, fails over on exhausted quota / outage, runs the agentic loop (tool calling),
+and keeps the observable state (quotas, cooldowns, statistics, event log) shown by the UI.
 
-Données pures        : catalog.py (providers), cleaning.py (nettoyage)
-Partie métier        : tools.py (registre d'outils) + set_system_prompt(), chargés via plugins.py
+Pure data            : catalog.py (providers), cleaning.py (cleanup)
+Application side     : tools.py (tool registry) + set_system_prompt(), loaded via plugins.py
 """
 import logging
 import os
@@ -30,35 +30,35 @@ load_dotenv()
 
 
 class LLMRouterError(RuntimeError):
-    """Aucun provider n'a pu répondre (ou boucle d'outils trop longue)."""
+    """No provider could answer (or the tool loop ran too long)."""
 
 
 # ============================================================
-# RÉGLAGES
+# SETTINGS
 # ============================================================
 
-MAX_TOOL_ROUNDS       = 8      # nombre max de tours « le modèle appelle des outils »
-TRANSIENT_RETRIES     = 1      # nouvelle tentative sur le même provider (erreur réseau / 5xx)
-TRANSIENT_BACKOFF_S   = 0.5    # base du backoff exponentiel (avec jitter)
+MAX_TOOL_ROUNDS       = 8      # max number of "the model calls tools" rounds
+TRANSIENT_RETRIES     = 1      # retries on the same provider (network error / 5xx)
+TRANSIENT_BACKOFF_S   = 0.5    # base of the exponential backoff (with jitter)
 
-COOLDOWN_RATE_LIMIT_S = 60     # 429 sans en-tête Retry-After
-COOLDOWN_TRANSIENT_S  = 30     # provider qui enchaîne les erreurs réseau / 5xx
-COOLDOWN_CONFIG_S     = 900    # 401 / 403 / 404 : clé ou modèle à corriger, inutile de réessayer vite
-COOLDOWN_PAYMENT_S    = 3600   # 402, limite à zéro, plafond JOURNALIER atteint : ne revient pas avant des heures
-COOLDOWN_MAX_S        = 3600   # plafond de tout cooldown (y compris Retry-After)
-COOLDOWN_SIZE_S       = 1800   # un modèle trop petit pour la demande (413) : sa limite ne change pas en 30 min
-COOLDOWN_EMPTY_S      = 300    # un modèle qui rend une réponse vide (raisonnement sans réponse) : on passe au suivant
-SIZE_MARGIN           = 0.9    # l'estimation de jetons surestime légèrement : on garde une marge
-QUOTA_STALE_S         = 300    # un quota lu depuis plus de 5 min est considéré « inconnu » et re-sondé
-PROBE_MAX_AGE_S       = 60     # âge max d'une sonde de quota (ex. OpenRouter /key) avant relecture
+COOLDOWN_RATE_LIMIT_S = 60     # 429 without a Retry-After header
+COOLDOWN_TRANSIENT_S  = 30     # provider chaining network errors / 5xx
+COOLDOWN_CONFIG_S     = 900    # 401 / 403 / 404 : key or model to fix, no point retrying soon
+COOLDOWN_PAYMENT_S    = 3600   # 402, zero limit, DAILY cap reached: won't be back for hours
+COOLDOWN_MAX_S        = 3600   # ceiling for any cooldown (Retry-After included)
+COOLDOWN_SIZE_S       = 1800   # a model too small for the request (413): its limit won't change within 30 min
+COOLDOWN_EMPTY_S      = 300    # a model returning an empty answer (reasoning without an answer): move on to the next
+SIZE_MARGIN           = 0.9    # the token estimate slightly overestimates: keep a margin
+QUOTA_STALE_S         = 300    # a quota read more than 5 min ago is considered "unknown" and probed again
+PROBE_MAX_AGE_S       = 60     # max age of a quota probe (e.g. OpenRouter /key) before re-reading
 EVENTS_KEPT           = 200
 
-DEFAULT_SYSTEM_PROMPT = "Tu es un assistant. Tu réponds en français, de façon claire et structurée."
+DEFAULT_SYSTEM_PROMPT = "You are an assistant. You answer clearly and in a structured way."
 _system_prompt = DEFAULT_SYSTEM_PROMPT
 
 
 def set_system_prompt(text: str) -> None:
-    """Définit le prompt système envoyé à chaque appel."""
+    """Set the system prompt sent with every call."""
     global _system_prompt
     _system_prompt = text
 
@@ -68,15 +68,15 @@ def get_system_prompt() -> str:
 
 
 # ============================================================
-# PROVIDERS ACTIFS
+# ACTIVE PROVIDERS
 # ============================================================
 
 _RE_VARIABLE = re.compile(r"\{([A-Z0-9_]+)\}")
 
 
 def _env_value(spec: dict, variable: str) -> str:
-    """Valeur d'une variable d'environnement du provider, sous son nom ou sous l'un de ses alias (`env_aliases`) :
-    la faute de frappe `CLOUDFLAIRE_ACCOUNT_ID` existe dans la nature."""
+    """Value of one of the provider's environment variables, under its name or one of its aliases (`env_aliases`):
+    the typo `CLOUDFLAIRE_ACCOUNT_ID` exists in the wild."""
     for name in (variable, *(spec.get("env_aliases") or {}).get(variable, ())):
         value = (os.getenv(name) or "").strip()
         if value:
@@ -85,7 +85,7 @@ def _env_value(spec: dict, variable: str) -> str:
 
 
 def _is_configured(spec: dict) -> bool:
-    """La clé ET les variables que l'adresse exige (identifiant de compte) sont renseignées."""
+    """The key AND the variables the URL requires (account id) are set."""
     return bool(_env_value(spec, spec["env_key"])) and all(_env_value(spec, v) for v in spec.get("env_required") or ())
 
 
@@ -97,11 +97,11 @@ def _build_providers() -> list:
     providers = []
     for spec in PROVIDER_SPECS:
         if not _is_configured(spec):
-            logger.info("LLM %s ignoré : %s absente", spec["name"], spec["env_key"])
+            logger.info("LLM %s skipped: %s missing", spec["name"], spec["env_key"])
             continue
         provider = dict(spec)
         provider["expires_at"] = (os.getenv(spec["env_key"] + "_EXPIRES") or "").strip() or None
-        # max_retries=0 : le SDK ne doit pas re-tenter (et dormir) sur un 429, c'est le routeur qui bascule.
+        # max_retries=0: the SDK must not retry (and sleep) on a 429, the router does the failover.
         provider["client"] = OpenAI(
             base_url=_resolve_base_url(spec), api_key=_env_value(spec, spec["env_key"]), max_retries=0,
             timeout=spec.get("timeout", REQUEST_TIMEOUT_S),
@@ -115,9 +115,9 @@ def _disabled_specs() -> list:
 
 
 _PROVIDERS = _build_providers()
-_DISABLED  = _disabled_specs()      # providers du catalogue sans clé : affichés « désactivé » par l'interface
+_DISABLED  = _disabled_specs()      # catalog providers without a key: shown as "disabled" by the UI
 
-_now   = time.monotonic             # indirections pour les tests
+_now   = time.monotonic             # indirections for the tests
 _sleep = time.sleep
 
 
@@ -126,23 +126,23 @@ def _provider_by_name(name: str) -> Optional[dict]:
 
 
 # ============================================================
-# ÉTAT OBSERVABLE (quotas, cooldowns, statistiques, journal)
+# OBSERVABLE STATE (quotas, cooldowns, statistics, event log)
 # ============================================================
 
 _quota_lock = threading.Lock()
 _provider_remaining:      Dict[str, Optional[int]] = {}
-_provider_seen:           Dict[str, float] = {}   # date de la dernière lecture du quota
-_provider_cooldown_until: Dict[str, float] = {}   # 0 = pas de cooldown
+_provider_seen:           Dict[str, float] = {}   # time of the last quota reading
+_provider_cooldown_until: Dict[str, float] = {}   # 0 = no cooldown
 _provider_last_error:     Dict[str, Optional[str]] = {}
-_provider_headers:        Dict[str, dict] = {}    # derniers en-têtes x-ratelimit-* : {"at": t, "values": {...}}
-_provider_probe:          Dict[str, dict] = {}    # dernière sonde de quota (OpenRouter /key…)
+_provider_headers:        Dict[str, dict] = {}    # last x-ratelimit-* headers: {"at": t, "values": {...}}
+_provider_probe:          Dict[str, dict] = {}    # last quota probe (OpenRouter /key…)
 _provider_stats:          Dict[str, dict] = {}
-_calls_window:            Dict[str, deque] = {}   # horodatages des appels (pour « appels / minute »)
-# ÉTAT PAR MODÈLE. Un 429 chez Groq écarte UN modèle (chacun a son budget de jetons par minute), pas tout le provider ;
-# un 413 apprend la limite d'un modèle. Le provider n'est en pause que lorsque plus aucun de ses modèles ne peut répondre.
+_calls_window:            Dict[str, deque] = {}   # call timestamps (for "calls / minute")
+# PER-MODEL STATE. A 429 at Groq sets ONE model aside (each has its own tokens-per-minute budget), not the whole provider;
+# a 413 teaches a model's limit. The provider is only paused when none of its models can answer any more.
 _model_cooldown_until:    Dict[Tuple[str, str], float] = {}
 _model_limit:             Dict[Tuple[str, str], int] = {}
-_model_budget:            Dict[Tuple[str, str], Tuple[int, float]] = {}   # jetons restants, instant de remise à zéro
+_model_budget:            Dict[Tuple[str, str], Tuple[int, float]] = {}   # remaining tokens, instant of the reset
 
 _events_lock = threading.Lock()
 _events: deque = deque(maxlen=EVENTS_KEPT)
@@ -180,7 +180,7 @@ def _record_event(provider: str, kind: str, message: str) -> None:
 
 
 def recent_events(limit: int = 60) -> List[dict]:
-    """Journal des événements, le plus récent d'abord."""
+    """Event log, newest first."""
     with _events_lock:
         return list(_events)[::-1][:limit]
 
@@ -212,7 +212,7 @@ def _record_call_result(name: str, ok: bool, seconds: float, tokens: int = 0) ->
 # ============================================================
 
 def _update_quota_from_headers(provider_name: str, headers, routing: bool = True) -> None:
-    """Mémorise les en-têtes de quota (affichage) et, si `routing`, le quota qui pilote le choix du provider."""
+    """Remember the quota headers (display) and, if `routing`, the quota that drives the provider choice."""
     provider = _provider_by_name(provider_name)
     if provider is None or headers is None:
         return
@@ -244,7 +244,7 @@ _RE_DURATION = re.compile(r"(\d+(?:\.\d+)?)(ms|h|m|s)")
 
 
 def _duration_text(text) -> Optional[float]:
-    """« 46.5s », « 1m30.5s », « 250ms », « 2m0s », « 12 » -> secondes. None si illisible."""
+    """'46.5s', '1m30.5s', '250ms', '2m0s', '12' -> seconds. None if unreadable."""
     if text is None:
         return None
     text = str(text).strip()
@@ -260,9 +260,9 @@ def _duration_text(text) -> Optional[float]:
 
 
 def _note_budget(provider_name: str, model: str, headers) -> None:
-    """Retient le budget de jetons annoncé par le provider (`x-ratelimit-*-tokens`) : on sait ainsi, AVANT d'appeler,
-    qu'un modèle n'a plus de quoi traiter la demande (pas de 429 évitable, pas de seconde perdue). La limite annoncée
-    devient la plus grande demande acceptable : au-delà, elle n'aboutira jamais, même à vide."""
+    """Remember the token budget announced by the provider (`x-ratelimit-*-tokens`): this tells us, BEFORE calling,
+    that a model can no longer handle the request (no avoidable 429, no second wasted). The announced limit
+    becomes the largest acceptable request: beyond it, the request will never succeed, even on an idle model."""
     if not headers:
         return
     key = (provider_name, model)
@@ -288,7 +288,7 @@ def _put_in_cooldown(provider_name: str, seconds: float, exhausted: bool = False
             _provider_seen[provider_name] = _now()
         if reason:
             _provider_last_error[provider_name] = reason[:200]
-    logger.warning("LLM %s indisponible %.0fs (%s)", provider_name, seconds, reason[:120])
+    logger.warning("LLM %s unavailable for %.0fs (%s)", provider_name, seconds, reason[:120])
 
 
 def _mark_provider_exhausted(provider_name: str, cooldown: float = COOLDOWN_RATE_LIMIT_S, reason: str = "") -> None:
@@ -302,7 +302,7 @@ def _clear_cooldown(provider_name: str) -> None:
 
 
 def _refresh_locked(now: float) -> None:
-    """Fin de cooldown ou quota périmé → quota « inconnu » (le provider est re-sondé). Appeler sous verrou."""
+    """Cooldown over or quota stale → quota 'unknown' (the provider is probed again). Call with the lock held."""
     for p in _PROVIDERS:
         name = p["name"]
         until = _provider_cooldown_until[name]
@@ -314,8 +314,8 @@ def _refresh_locked(now: float) -> None:
 
 
 def _models_for(provider: dict, mode: str) -> List[str]:
-    """Modèles essayables, par ordre. HEAVY : le lourd puis les modèles de repli DÉCLARÉS (`extra_models`) ; le léger n'en
-    fait partie que s'il y est listé. LIGHT (quota bas) : le léger seul."""
+    """Models that can be tried, in order. HEAVY: the heavy one then the DECLARED fallback models (`extra_models`); the
+    light one is only part of it if listed there. LIGHT (low quota): the light one alone."""
     if mode == "LIGHT":
         return [provider["model_light"]]
     out: List[str] = []
@@ -326,12 +326,12 @@ def _models_for(provider: dict, mode: str) -> List[str]:
 
 
 def _estimate_tokens(messages: list) -> int:
-    """Estimation grossière des jetons d'entrée (~3 caractères par jeton en français)."""
+    """Rough estimate of the input tokens (~3 characters per token)."""
     return sum(len(str(m.get("content") or "")) for m in messages) // 3 + 4 * len(messages)
 
 
 def _model_wait(provider: dict, model: str, need_tokens: int = 0, now: Optional[float] = None) -> float:
-    """Secondes avant que ce modèle soit utilisable pour une demande de `need_tokens` jetons, 0 s'il l'est maintenant."""
+    """Seconds until this model is usable for a request of `need_tokens` tokens, 0 if it is usable now."""
     now = _now() if now is None else now
     key = (provider["name"], model)
     with _quota_lock:
@@ -339,13 +339,13 @@ def _model_wait(provider: dict, model: str, need_tokens: int = 0, now: Optional[
         until = _model_cooldown_until.get(key, 0.0)
         budget = _model_budget.get(key)
         if budget is not None and now >= budget[1]:
-            _model_budget.pop(key, None)       # la fenêtre est repartie à zéro : le budget annoncé n'a plus cours
+            _model_budget.pop(key, None)       # the window has reset: the announced budget no longer applies
             budget = None
     if limit and need_tokens * SIZE_MARGIN > limit:
-        return float(COOLDOWN_SIZE_S)          # la demande ne passera pas, inutile d'appeler pour recevoir un 413
+        return float(COOLDOWN_SIZE_S)          # the request won't fit, no point calling just to get a 413
     wait = max(0.0, until - now)
     if budget is not None and budget[0] < need_tokens:
-        wait = max(wait, budget[1] - now)      # le budget de jetons annoncé ne suffit pas : attendre sa remise à zéro
+        wait = max(wait, budget[1] - now)      # the announced token budget is not enough: wait for its reset
     return wait
 
 
@@ -354,7 +354,7 @@ def _first_usable_model(provider: dict, mode: str, need_tokens: int, now: float)
 
 
 def _soonest_model_return(provider: dict, need_tokens: int = 0) -> float:
-    """Secondes avant que le premier modèle du provider redevienne utilisable (au moins 1)."""
+    """Seconds until the provider's first model is usable again (at least 1)."""
     waits = [_model_wait(provider, m, need_tokens) for m in _models_for(provider, "HEAVY")]
     return max(1.0, min(waits)) if waits else float(COOLDOWN_RATE_LIMIT_S)
 
@@ -364,8 +364,8 @@ def _bench_model(provider: dict, model: str, seconds: float, reason: str) -> Non
     with _quota_lock:
         _model_cooldown_until[(provider["name"], model)] = _now() + seconds
         _provider_last_error[provider["name"]] = reason[:200]
-    _record_event(provider["name"], "model_paused", f"{model} écarté {seconds:.0f}s : {reason}"[:240])
-    logger.warning("LLM %s / %s écarté %.0fs (%s)", provider["name"], model, seconds, reason[:120])
+    _record_event(provider["name"], "model_paused", f"{model} set aside {seconds:.0f}s: {reason}"[:240])
+    logger.warning("LLM %s / %s set aside for %.0fs (%s)", provider["name"], model, seconds, reason[:120])
 
 
 def _other_model_usable(provider: dict, model: str, need_tokens: int = 0) -> bool:
@@ -373,20 +373,20 @@ def _other_model_usable(provider: dict, model: str, need_tokens: int = 0) -> boo
 
 
 def _call_options(provider: dict, model: str) -> dict:
-    """Réglages propres à ce MODÈLE (`model_options`) : `extra_body` pour couper le raisonnement des Nemotron."""
+    """Settings specific to this MODEL (`model_options`): `extra_body` to turn off the reasoning of Nemotron models."""
     opt = (provider.get("model_options") or {}).get(model) or {}
     return {"extra_body": opt["extra_body"]} if opt.get("extra_body") else {}
 
 
 def _choose_provider_and_model(exclude=(), require_tools: bool = False, need_tokens: int = 0,
                                only=None, prefer: Optional[str] = None) -> Tuple[dict, str, str]:
-    """HEAVY : 1er provider dont le quota est suffisant. LIGHT : celui qui a le plus de quota restant.
-    `exclude` = providers déjà essayés pendant cet appel ; `require_tools` = la conversation contient des tool calls ;
-    `need_tokens` = taille estimée de la demande (un modèle trop petit pour elle est sauté) ; `only` = noms de
-    providers permis ; `prefer` = provider essayé en premier s'il est éligible.
-    Dans un provider, le premier modèle utilisable : un modèle écarté ne met pas tout le provider de côté."""
+    """HEAVY: first provider whose quota is sufficient. LIGHT: the one with the most remaining quota.
+    `exclude` = providers already tried during this call; `require_tools` = the conversation contains tool calls;
+    `need_tokens` = estimated size of the request (a model too small for it is skipped); `only` = allowed provider
+    names; `prefer` = provider tried first if eligible.
+    Within a provider, the first usable model: a model set aside does not sideline the whole provider."""
     if not _PROVIDERS:
-        raise LLMRouterError("Aucun provider configuré : renseignez au moins une clé API dans .env")
+        raise LLMRouterError("No provider configured: set at least one API key in .env")
     now = _now()
     with _quota_lock:
         _refresh_locked(now)
@@ -405,7 +405,7 @@ def _choose_provider_and_model(exclude=(), require_tools: bool = False, need_tok
         p for p in candidates
         if remaining[p["name"]] is None or remaining[p["name"]] >= p["quota_min"]
     ]
-    prefer_tools = len(registry) > 0          # sans outils enregistrés, l'ordre du catalogue suffit
+    prefer_tools = len(registry) > 0          # with no registered tools, the catalog order is enough
     healthy.sort(key=lambda p: (p["name"] != prefer, prefer_tools and not p["supports_tools"], _PROVIDERS.index(p)))
     for provider in healthy:
         model = _first_usable_model(provider, "HEAVY", need_tokens, now)
@@ -424,14 +424,14 @@ def _choose_provider_and_model(exclude=(), require_tools: bool = False, need_tok
 
     waits = [cooldown[p["name"]] - now for p in _PROVIDERS if cooldown[p["name"]] > now]
     waits += [_soonest_model_return(p, need_tokens) for p in candidates]
-    hint = f" Réessayez dans ~{int(min(waits)) + 1}s." if waits else ""
+    hint = f" Retry in ~{int(min(waits)) + 1}s." if waits else ""
     causes = "; ".join(f"{p['name']} → {last_err[p['name']]}" for p in _PROVIDERS if last_err[p["name"]])
-    raise LLMRouterError("Aucun provider disponible." + hint + (f" Dernières erreurs : {causes}" if causes else ""))
+    raise LLMRouterError("No provider available." + hint + (f" Last errors: {causes}" if causes else ""))
 
 
 def available_providers(only=None, need_tokens: int = 0) -> List[str]:
-    """Noms des providers qui peuvent répondre MAINTENANT (hors pause, au moins un modèle utilisable). Sert à
-    l'exécuteur parallèle : un provider en pause ne doit pas prendre de travail."""
+    """Names of the providers that can answer RIGHT NOW (not paused, at least one usable model). Used by the
+    parallel executor: a paused provider must not take work."""
     now = _now()
     with _quota_lock:
         _refresh_locked(now)
@@ -442,7 +442,7 @@ def available_providers(only=None, need_tokens: int = 0) -> List[str]:
 
 
 def next_provider(require_tools: bool = False) -> dict:
-    """Quel provider/modèle serait choisi maintenant (sans rien appeler)."""
+    """Which provider/model would be chosen now (without calling anything)."""
     try:
         provider, model, mode = _choose_provider_and_model(require_tools=require_tools)
         return {"provider": provider["name"], "label": provider.get("label", provider["name"]),
@@ -451,7 +451,7 @@ def next_provider(require_tools: bool = False) -> dict:
         return {"provider": None, "error": str(e)}
 
 
-# ----- sondes de quota hors en-têtes ---------------------------------------------------------
+# ----- quota probes outside headers ---------------------------------------------------------
 
 def _probe_openrouter(provider: dict) -> dict:
     data = provider["client"].get("/key", cast_to=object)
@@ -459,7 +459,7 @@ def _probe_openrouter(provider: dict) -> dict:
     limits = []
     free = data.get("free_model_daily_requests")
     if isinstance(free, dict) and free.get("limit") is not None:
-        limits.append({"label": "requêtes gratuites / jour", "remaining": free.get("remaining"),
+        limits.append({"label": "free requests / day", "remaining": free.get("remaining"),
                        "limit": free.get("limit"), "source": "API /key"})
     return {"limits": limits, "expires_at": data.get("expires_at")}
 
@@ -468,7 +468,7 @@ _PROBES = {"openrouter": _probe_openrouter}
 
 
 def refresh_probes(force: bool = False) -> None:
-    """Relit les quotas qui ne passent pas par des en-têtes (bloquant : à appeler hors de la boucle d'événements)."""
+    """Re-read the quotas that do not come through headers (blocking: call outside the event loop)."""
     for provider in list(_PROVIDERS):
         probe = _PROBES.get(provider.get("probe"))
         if probe is None:
@@ -488,7 +488,7 @@ def refresh_probes(force: bool = False) -> None:
 
 
 def _limits_from_headers(provider: dict, values: dict) -> List[dict]:
-    """Transforme les paires x-ratelimit-remaining-X / x-ratelimit-limit-X en jauges lisibles."""
+    """Turn the x-ratelimit-remaining-X / x-ratelimit-limit-X pairs into readable gauges."""
     labels = provider.get("quota_labels") or {}
     out = []
     for header, raw in values.items():
@@ -504,8 +504,8 @@ def _limits_from_headers(provider: dict, values: dict) -> List[dict]:
             limit = int(float(raw_limit)) if raw_limit is not None else None
         except (TypeError, ValueError):
             limit = None
-        label = labels.get(suffix) or suffix.replace("-", " ") or "requêtes"
-        out.append({"label": label, "remaining": remaining, "limit": limit, "source": "en-tête"})
+        label = labels.get(suffix) or suffix.replace("-", " ") or "requests"
+        out.append({"label": label, "remaining": remaining, "limit": limit, "source": "header"})
     return sorted(out, key=lambda x: x["label"])
 
 
@@ -526,7 +526,7 @@ def _catalog_index(name: str) -> int:
 
 
 def quota_status() -> Dict[str, dict]:
-    """Snapshot lisible de chaque provider (statut, quotas, statistiques) — consommé par l'interface et /api/status."""
+    """Readable snapshot of each provider (status, quotas, statistics) — consumed by the UI and /api/status."""
     now = _now()
     with _quota_lock:
         _refresh_locked(now)
@@ -585,7 +585,7 @@ def quota_status() -> Dict[str, dict]:
 
 
 # ============================================================
-# ERREURS : classification et réaction
+# ERRORS: classification and reaction
 # ============================================================
 
 def _classify_error(e: Exception) -> str:
@@ -593,30 +593,30 @@ def _classify_error(e: Exception) -> str:
     if isinstance(e, openai.RateLimitError):
         return "rate_limit"
     if isinstance(e, openai.APIStatusError) and getattr(e, "status_code", None) == 402:
-        return "payment"                       # offre non activée ou modèle d'un plan payant : ne se règle pas en une minute
+        return "payment"                       # offer not activated or model on a paid plan: won't be fixed within a minute
     if isinstance(e, (openai.APIConnectionError, openai.InternalServerError)):  # inclut APITimeoutError
         return "transient"
     if isinstance(e, (openai.AuthenticationError, openai.PermissionDeniedError, openai.NotFoundError)):
         return "config"
-    if isinstance(e, openai.APIStatusError):   # 400, 410, 413, 422… : ce provider refuse cette requête
+    if isinstance(e, openai.APIStatusError):   # 400, 410, 413, 422…: this provider refuses this request
         return "rejected"
     err = str(e).lower()
     if "429" in err or "rate_limit" in err or "quota" in err:
         return "rate_limit"
-    return "fatal"                             # bug local (TypeError, KeyError…) : on ne masque pas
+    return "fatal"                             # local bug (TypeError, KeyError…): don't mask it
 
 
 def _describe_error(e: Exception) -> str:
-    """Message d'erreur lisible : « RateLimitError 429: … » avec la vraie raison extraite du corps de la réponse."""
+    """Readable error message: 'RateLimitError 429: …' with the real reason extracted from the response body."""
     body = getattr(e, "body", None)
-    if isinstance(body, list) and body:        # Gemini renvoie une liste
+    if isinstance(body, list) and body:        # Gemini returns a list
         body = body[0]
     msg = None
     if isinstance(body, dict):
         err = body.get("error") if isinstance(body.get("error"), dict) else body
         msg = err.get("message") or err.get("detail") or body.get("detail")
         raw = (err.get("metadata") or {}).get("raw") if isinstance(err.get("metadata"), dict) else None
-        if raw and (not msg or msg == "Provider returned error"):   # OpenRouter : la cause est dans metadata.raw
+        if raw and (not msg or msg == "Provider returned error"):   # OpenRouter: the cause is in metadata.raw
             msg = raw
     if not msg:
         msg = re.sub(r"^Error code: \d+ - ", "", str(e))
@@ -634,7 +634,7 @@ def _retry_after_seconds(e: Exception) -> Optional[float]:
             try:
                 return float(val) * factor
             except (TypeError, ValueError):
-                pass   # Retry-After au format date HTTP : ignoré
+                pass   # Retry-After in HTTP date format: ignored
     return None
 
 
@@ -644,8 +644,8 @@ def _response_header(e: Exception, name: str) -> Optional[str]:
 
 
 def _limit_is_zero(e: Exception) -> bool:
-    """Une limite par minute à ZÉRO veut dire « offre gratuite non activée » (clé valide mais sans droit de chat) :
-    inutile de réessayer avant longtemps."""
+    """A per-minute limit of ZERO means 'free offer not activated' (valid key but no chat entitlement):
+    no point retrying for a long time."""
     value = _response_header(e, "x-ratelimit-limit-req-minute")
     return value is not None and str(value).strip() == "0"
 
@@ -654,15 +654,15 @@ _DAILY_MARKERS = ("perday", "per day", "per-day", "daily", "par jour", "quotidie
 
 
 def _is_daily_cap(e: Exception) -> bool:
-    """Le 429 vient-il d'une allocation QUOTIDIENNE épuisée (Gemini : `GenerateRequestsPerDayPerProjectPerModel`,
-    Cloudflare : « daily free allocation », OpenRouter : `free-models-per-day`) ? Elle ne revient pas avant des heures :
-    la retenter chaque minute ne fait que perdre un appel."""
+    """Does the 429 come from an exhausted DAILY allocation (Gemini: `GenerateRequestsPerDayPerProjectPerModel`,
+    Cloudflare: "daily free allocation", OpenRouter: `free-models-per-day`)? It won't be back for hours:
+    retrying every minute only wastes a call."""
     return any(marker in f"{_describe_error(e)} {getattr(e, 'body', '')}".lower() for marker in _DAILY_MARKERS)
 
 
 def _rate_limit_delay(e: Exception) -> float:
-    """Combien de temps écarter après un 429 : `Retry-After`, sinon la remise à zéro du budget de jetons annoncée par
-    le provider, sinon une heure pour un plafond journalier, sinon la pause par défaut."""
+    """How long to set aside after a 429: `Retry-After`, otherwise the token budget reset announced by the
+    provider, otherwise one hour for a daily cap, otherwise the default pause."""
     return (_retry_after_seconds(e)
             or _duration_text(_response_header(e, "x-ratelimit-reset-tokens"))
             or (COOLDOWN_PAYMENT_S if _is_daily_cap(e) else COOLDOWN_RATE_LIMIT_S))
@@ -672,19 +672,19 @@ _RE_LIMIT_413 = re.compile(r"Limit (\d+)")
 
 
 def _limit_from_413(e: Exception) -> Optional[int]:
-    """« Request too large ... tokens per minute (TPM): Limit 8000, Requested 8285 » -> 8000."""
+    """'Request too large ... tokens per minute (TPM): Limit 8000, Requested 8285' -> 8000."""
     found = _RE_LIMIT_413.search(_describe_error(e))
     return int(found.group(1)) if found else None
 
 
 def _handle_call_failure(provider: dict, e: Exception, excluded: set, retries: Dict[str, int],
                          model: Optional[str] = None, need_tokens: int = 0) -> str:
-    """Réagit à une exception d'appel et retourne sa catégorie. Si le provider n'est pas ajouté à `excluded`,
-    l'appelant doit re-tenter le même ; lève si l'erreur est un bug local.
+    """React to a call exception and return its category. If the provider is not added to `excluded`,
+    the caller must retry the same one; raises if the error is a local bug.
 
-    Retourne « model_limited » quand SEUL le modèle a été écarté et qu'un autre modèle du même provider peut répondre :
-    le provider reste en jeu, l'appelant choisit un autre modèle (un seul 413 ne doit pas écarter tout un provider
-    alors que ses autres modèles sont disponibles)."""
+    Returns "model_limited" when ONLY the model was set aside and another model of the same provider can answer:
+    the provider stays in play, the caller picks another model (a single 413 must not sideline a whole provider
+    while its other models are available)."""
     name, kind = provider["name"], _classify_error(e)
     reason = _describe_error(e)[:200]
     if kind == "fatal":
@@ -703,35 +703,35 @@ def _handle_call_failure(provider: dict, e: Exception, excluded: set, retries: D
             _bench_model(provider, model, delay, reason)
             if _other_model_usable(provider, model, need_tokens):
                 return "model_limited"
-            delay = _soonest_model_return(provider, need_tokens)      # le provider revient avec son premier modèle
+            delay = _soonest_model_return(provider, need_tokens)      # the provider comes back with its first model
         _mark_provider_exhausted(name, delay, reason)
         excluded.add(name)
     elif kind == "transient":
         if retries.get(name, 0) < TRANSIENT_RETRIES:
             attempt = retries[name] = retries.get(name, 0) + 1
             delay = TRANSIENT_BACKOFF_S * (2 ** (attempt - 1)) * (0.5 + random.random())
-            logger.warning("LLM %s erreur transitoire (%s) → nouvelle tentative dans %.1fs", name, reason, delay)
+            logger.warning("LLM %s transient error (%s) → retrying in %.1fs", name, reason, delay)
             _sleep(delay)
-            return kind                 # même provider
+            return kind                 # same provider
         _put_in_cooldown(name, COOLDOWN_TRANSIENT_S, reason=reason)
         excluded.add(name)
     elif kind == "config":
-        if multi and status == 404:     # un modèle retiré du catalogue ne dit rien des autres
+        if multi and status == 404:     # a model removed from the catalog says nothing about the others
             _bench_model(provider, model, COOLDOWN_CONFIG_S, reason)
             if _other_model_usable(provider, model, need_tokens):
                 return "model_limited"
         _put_in_cooldown(name, COOLDOWN_CONFIG_S, reason=reason)
         excluded.add(name)
-    else:   # rejected : propre à cette requête
+    else:   # rejected: specific to this request
         if status == 413 and model is not None:
             limit = _limit_from_413(e)
             if limit is not None:
                 with _quota_lock:
                     _model_limit[(name, model)] = limit
-                _bench_model(provider, model, COOLDOWN_SIZE_S, f"demande plus grande que la limite de {limit} jetons (413)")
+                _bench_model(provider, model, COOLDOWN_SIZE_S, f"request larger than the {limit}-token limit (413)")
                 if _other_model_usable(provider, model, need_tokens):
                     return "model_limited"
-        logger.warning("LLM %s a refusé la requête (%s) → bascule", name, reason)
+        logger.warning("LLM %s refused the request (%s) → failing over", name, reason)
         with _quota_lock:
             _provider_last_error[name] = reason
         excluded.add(name)
@@ -739,22 +739,22 @@ def _handle_call_failure(provider: dict, e: Exception, excluded: set, retries: D
 
 
 def _handle_empty_answer(provider: dict, model: str, excluded: set, need_tokens: int = 0) -> None:
-    """Réponse vide : un modèle qui raisonne a dépensé tous ses jetons avant d'écrire. Passe au modèle suivant du
-    provider s'il en a un utilisable, sinon écarte le provider pour cet appel."""
+    """Empty answer: a reasoning model spent all its tokens before writing. Moves on to the provider's next
+    model if one is usable, otherwise sets the provider aside for this call."""
     models = _models_for(provider, "HEAVY")
     if model in models and len(models) > 1:
-        _bench_model(provider, model, COOLDOWN_EMPTY_S, "réponse vide (raisonnement sans réponse ?)")
+        _bench_model(provider, model, COOLDOWN_EMPTY_S, "empty response (reasoning without an answer?)")
         if _other_model_usable(provider, model, need_tokens):
             return
     excluded.add(provider["name"])
 
 
 # ============================================================
-# ACTIONS MANUELLES (interface)
+# MANUAL ACTIONS (UI)
 # ============================================================
 
 def ping_provider(name: str) -> dict:
-    """Appel minimal sur le modèle léger : vérifie la clé, mesure la latence, lève le cooldown si ça répond."""
+    """Minimal call on the light model: checks the key, measures latency, lifts the cooldown if it answers."""
     provider = _provider_by_name(name)
     if provider is None:
         raise KeyError(name)
@@ -762,7 +762,7 @@ def ping_provider(name: str) -> dict:
     t0 = time.perf_counter()
     try:
         raw = provider["client"].chat.completions.with_raw_response.create(
-            model=model, messages=[{"role": "user", "content": "Réponds uniquement : OK"}],
+            model=model, messages=[{"role": "user", "content": "Reply only: OK"}],
             max_tokens=32, temperature=0, **_call_options(provider, model))
         response = raw.parse()
     except Exception as e:
@@ -783,15 +783,15 @@ def ping_provider(name: str) -> dict:
 
 
 def reset_provider(name: str) -> None:
-    """Lève le cooldown et oublie le quota : le provider est de nouveau éligible tout de suite."""
+    """Lift the cooldown and forget the quota: the provider is eligible again right away."""
     if _provider_by_name(name) is None:
         raise KeyError(name)
     _clear_cooldown(name)
-    _record_event(name, "info", "cooldown levé manuellement")
+    _record_event(name, "info", "cooldown lifted manually")
 
 
 # ============================================================
-# BOUCLE AGENTIQUE
+# AGENTIC LOOP
 # ============================================================
 
 def _strip_tool_artifacts(text: str) -> str:
@@ -800,27 +800,27 @@ def _strip_tool_artifacts(text: str) -> str:
 
 @dataclass
 class ChatResult:
-    """Réponse + ce qui s'est passé pour l'obtenir."""
+    """Answer + what happened to obtain it."""
     answer: str
     provider: str
     model: str
     mode: str
     latency_ms: int
     tool_rounds: int = 0
-    trail: List[dict] = field(default_factory=list)   # providers essayés avant celui qui a répondu
+    trail: List[dict] = field(default_factory=list)   # providers tried before the one that answered
 
     def to_dict(self) -> dict:
         return asdict(self)
 
 
 def chat(conversation_history: list, user_message: str) -> str:
-    """Ajoute user_message à l'historique, exécute la boucle (tool calls inclus), retourne la réponse.
-    En cas d'échec, l'historique est remis dans son état d'avant l'appel (on peut renvoyer le même message)."""
+    """Append user_message to the history, run the loop (tool calls included), return the answer.
+    On failure, the history is restored to its state before the call (the same message can be sent again)."""
     return chat_detailed(conversation_history, user_message).answer
 
 
 def chat_detailed(conversation_history: list, user_message: str) -> ChatResult:
-    """Comme `chat`, mais retourne aussi le provider/modèle utilisé, la latence et les bascules."""
+    """Like `chat`, but also returns the provider/model used, the latency and the failovers."""
     start = len(conversation_history)
     conversation_history.append({"role": "user", "content": user_message})
     try:
@@ -841,12 +841,12 @@ def _chat_loop(conversation_history: list) -> ChatResult:
     for msg in relevant[-10:]:
         messages.append({"role": msg["role"], "content": msg["content"]})
 
-    excluded: set = set()            # providers abandonnés pour CET appel (garantit que la boucle se termine)
+    excluded: set = set()            # providers abandoned for THIS call (guarantees the loop terminates)
     retries: Dict[str, int] = {}
     trail: List[dict] = []
     tool_rounds = 0
     nudged = False
-    in_tool_exchange = False         # des tool calls sont en cours : seuls les providers avec tools peuvent continuer
+    in_tool_exchange = False         # tool calls are in progress: only providers with tools can continue
 
     need = _estimate_tokens(messages)
     provider, model, mode = _choose_provider_and_model(excluded, need_tokens=need)
@@ -870,21 +870,21 @@ def _chat_loop(conversation_history: list) -> ChatResult:
             trail.append({"provider": provider["name"], "model": model, "outcome": kind,
                           "detail": _describe_error(e)[:160]})
             if kind != "model_limited" and provider["name"] not in excluded:
-                continue                                  # nouvelle tentative sur le même provider et le même modèle
+                continue                                  # retry on the same provider and the same model
             provider, model, mode = _choose_provider_and_model(excluded, in_tool_exchange, need)
-            logger.info("LLM bascule → [%s] %s / %s", mode, provider["name"], model)
+            logger.info("LLM failover → [%s] %s / %s", mode, provider["name"], model)
             continue
 
         with _quota_lock:
             rem = _provider_remaining.get(provider["name"])
         if rem is not None:
-            logger.info("LLM [%s] quota restant : %s tokens", provider["name"], rem)
+            logger.info("LLM [%s] remaining quota: %s tokens", provider["name"], rem)
 
         if not response.choices:
             _record_call_result(provider["name"], False, time.perf_counter() - t_call)
-            _record_event(provider["name"], "no_choices", "réponse sans choices")
-            trail.append({"provider": provider["name"], "outcome": "no_choices", "detail": "réponse sans choices"})
-            _mark_provider_exhausted(provider["name"], COOLDOWN_RATE_LIMIT_S, "réponse sans choices")
+            _record_event(provider["name"], "no_choices", "response without choices")
+            trail.append({"provider": provider["name"], "outcome": "no_choices", "detail": "response without choices"})
+            _mark_provider_exhausted(provider["name"], COOLDOWN_RATE_LIMIT_S, "response without choices")
             excluded.add(provider["name"])
             provider, model, mode = _choose_provider_and_model(excluded, in_tool_exchange, need)
             continue
@@ -897,13 +897,13 @@ def _chat_loop(conversation_history: list) -> ChatResult:
             final   = message.content or ""
             cleaned = _strip_tool_artifacts(final)
             if not cleaned:
-                logger.warning("LLM %s : réponse vide après nettoyage → bascule", provider["name"])
-                _record_event(provider["name"], "empty", "réponse vide après nettoyage")
-                trail.append({"provider": provider["name"], "model": model, "outcome": "empty", "detail": "réponse vide"})
+                logger.warning("LLM %s: empty response after cleaning → failing over", provider["name"])
+                _record_event(provider["name"], "empty", "empty response after cleaning")
+                trail.append({"provider": provider["name"], "model": model, "outcome": "empty", "detail": "empty response"})
                 _handle_empty_answer(provider, model, excluded, need)
                 provider, model, mode = _choose_provider_and_model(excluded, in_tool_exchange, need)
                 if not nudged:
-                    messages.append({"role": "user", "content": "Réponds à ma question précédente."})
+                    messages.append({"role": "user", "content": "Answer my previous question."})
                     nudged = True
                 continue
             conversation_history.append({"role": "assistant", "content": cleaned})
@@ -914,7 +914,7 @@ def _chat_loop(conversation_history: list) -> ChatResult:
 
         tool_rounds += 1
         if tool_rounds > MAX_TOOL_ROUNDS:
-            raise LLMRouterError(f"Plus de {MAX_TOOL_ROUNDS} tours d'outils sans réponse finale : abandon.")
+            raise LLMRouterError(f"More than {MAX_TOOL_ROUNDS} tool rounds without a final answer: giving up.")
         in_tool_exchange = True
 
         messages.append({
@@ -933,16 +933,16 @@ def _chat_loop(conversation_history: list) -> ChatResult:
 
 
 # ============================================================
-# APPEL ISOLÉ (sans conversation ni outils) : lectures par lot, extraction, classification…
+# STANDALONE CALL (no conversation, no tools): batch reads, extraction, classification…
 # ============================================================
 
 def provider_names(only=None) -> List[str]:
-    """Noms des providers configurés (clé présente), dans l'ordre de préférence."""
+    """Names of the configured providers (key present), in order of preference."""
     return [p["name"] for p in _PROVIDERS if only is None or p["name"] in only]
 
 
 def provider_settings(name: str) -> dict:
-    """Réglages de lecture par lot d'un provider : requêtes simultanées au plus, écart entre deux départs."""
+    """Batch-read settings of a provider: max simultaneous requests, gap between two starts."""
     provider = _provider_by_name(name)
     if provider is None:
         raise KeyError(name)
@@ -951,7 +951,7 @@ def provider_settings(name: str) -> dict:
 
 @dataclass
 class GenerateResult:
-    """Réponse d'un appel isolé, avec ce qui s'est passé pour l'obtenir."""
+    """Answer of a standalone call, with what happened to obtain it."""
     text: str
     provider: str
     model: str
@@ -960,8 +960,8 @@ class GenerateResult:
     tokens_in: Optional[int] = None
     tokens_out: Optional[int] = None
     finish_reason: Optional[str] = None
-    truncated: bool = False            # la réponse s'est arrêtée sur `max_tokens` : un JSON peut être coupé
-    reasoning_used: bool = False       # le modèle a écrit un raisonnement (reasoning_content)
+    truncated: bool = False            # the answer stopped on `max_tokens`: a JSON may be cut off
+    reasoning_used: bool = False       # the model wrote some reasoning (reasoning_content)
     trail: List[dict] = field(default_factory=list)
 
     def to_dict(self) -> dict:
@@ -969,8 +969,8 @@ class GenerateResult:
 
 
 def _client_for(provider: dict, timeout: Optional[float]):
-    """Client du provider, avec un délai ALLONGÉ pour cet appel. Il ne raccourcit jamais celui du provider : le délai
-    du catalogue est calibré pour le chat (20 s chez NVIDIA), pas pour une longue réponse JSON."""
+    """The provider's client, with a LONGER timeout for this call. It never shortens the provider's own: the catalog
+    timeout is tuned for chat (20 s at NVIDIA), not for a long JSON answer."""
     client = provider["client"]
     if timeout and timeout > provider.get("timeout", REQUEST_TIMEOUT_S) and hasattr(client, "with_options"):
         client = client.with_options(timeout=float(timeout))
@@ -986,17 +986,17 @@ def _messages_for(prompt, system: Optional[str]) -> list:
 
 def generate(prompt, system: Optional[str] = None, *, max_tokens: int = 4096, temperature: float = 0.0,
              timeout: Optional[float] = None, only=None, prefer: Optional[str] = None) -> GenerateResult:
-    """Un appel sans conversation : bascule entre providers ET entre modèles, comme `chat`, sans outils.
+    """A call without conversation: fails over between providers AND between models, like `chat`, without tools.
 
-    prompt       texte, ou liste de messages {"role", "content"}
-    max_tokens   plafond de sortie. Il INCLUT le raisonnement des modèles qui raisonnent : trop bas, la réponse est vide
-    timeout      secondes accordées à chaque provider POUR CET APPEL (allonge celui du catalogue, ne le raccourcit pas)
-    only         noms de providers permis (None = tous)
-    prefer       provider essayé en premier s'il est éligible (répartition de charge : voir parallel.py)
+    prompt       text, or list of {"role", "content"} messages
+    max_tokens   output cap. It INCLUDES the reasoning of reasoning models: too low, and the answer is empty
+    timeout      seconds granted to each provider FOR THIS CALL (lengthens the catalog one, never shortens it)
+    only         allowed provider names (None = all)
+    prefer       provider tried first if eligible (load spreading: see parallel.py)
 
-    Une réponse VIDE n'est jamais renvoyée : le modèle est écarté et le suivant essayé. Lève LLMRouterError si plus rien
-    ne peut répondre. Le contrôle du CONTENU (JSON valide, citations retrouvées dans la source) reste à l'appelant :
-    un JSON valide mais vide ne se distingue pas d'une absence réelle."""
+    An EMPTY answer is never returned: the model is set aside and the next one tried. Raises LLMRouterError if nothing
+    can answer any more. Checking the CONTENT (valid JSON, quotes found in the source) is left to the caller:
+    a valid but empty JSON is indistinguishable from a real absence."""
     t_start = time.perf_counter()
     messages = _messages_for(prompt, system)
     need = _estimate_tokens(messages)
@@ -1026,9 +1026,9 @@ def generate(prompt, system: Optional[str] = None, *, max_tokens: int = 4096, te
 
         if not response.choices:
             _record_call_result(provider["name"], False, time.perf_counter() - t_call)
-            _record_event(provider["name"], "no_choices", "réponse sans choices")
-            trail.append({"provider": provider["name"], "model": model, "outcome": "no_choices", "detail": "réponse sans choices"})
-            _mark_provider_exhausted(provider["name"], COOLDOWN_RATE_LIMIT_S, "réponse sans choices")
+            _record_event(provider["name"], "no_choices", "response without choices")
+            trail.append({"provider": provider["name"], "model": model, "outcome": "no_choices", "detail": "response without choices"})
+            _mark_provider_exhausted(provider["name"], COOLDOWN_RATE_LIMIT_S, "response without choices")
             excluded.add(provider["name"])
             provider, model, mode = _choose_provider_and_model(excluded, need_tokens=need, only=only, prefer=prefer)
             continue
@@ -1040,8 +1040,8 @@ def generate(prompt, system: Optional[str] = None, *, max_tokens: int = 4096, te
                          or (getattr(message, "model_extra", None) or {}).get("reasoning_content"))
         if not text:
             _record_call_result(provider["name"], False, time.perf_counter() - t_call)
-            why = ("max_tokens atteint pendant le raisonnement" if choice.finish_reason == "length" and reasoning
-                   else "raisonnement sans réponse" if reasoning else "réponse vide")
+            why = ("max_tokens reached during reasoning" if choice.finish_reason == "length" and reasoning
+                   else "reasoning without an answer" if reasoning else "empty response")
             _record_event(provider["name"], "empty", f"{model} : {why}")
             trail.append({"provider": provider["name"], "model": model, "outcome": "empty", "detail": why})
             _handle_empty_answer(provider, model, excluded, need)
@@ -1060,10 +1060,10 @@ def generate(prompt, system: Optional[str] = None, *, max_tokens: int = 4096, te
 
 
 # ============================================================
-# DIAGNOSTIC : quels modèles listés répondent VRAIMENT ?
+# DIAGNOSTIC: which listed models REALLY answer?
 # ============================================================
 
-# Modèles qui ne sont pas du texte (embeddings, reranking, vision seule, parole, images, biologie…) : écartés du sondage.
+# Models that are not text (embeddings, reranking, vision only, speech, images, biology…): left out of the probe.
 _NON_TEXT = re.compile(
     r"embed|rerank|vision|clip|paligemma|neva|fuyu|parse|safety|guard|riva|asr|tts|translate|reward|retriev|diffusion|"
     r"cosmos|sdxl|flux|stable|genmol|molmim|esm|bionemo|alphafold|deplot|kosmos|llava|vila|pii|whisper|parakeet|"
@@ -1072,27 +1072,27 @@ _NON_TEXT = re.compile(
 
 def _probe_outcome(e: Exception) -> str:
     if isinstance(e, openai.NotFoundError):
-        return "404 non appelable"           # listé par le provider mais « Function not found »
+        return "404 not callable"            # listed by the provider but "Function not found"
     if isinstance(e, openai.APITimeoutError):
-        return "délai dépassé"
+        return "timeout"
     if isinstance(e, openai.RateLimitError):
         return "429 quota"
     if isinstance(e, (openai.AuthenticationError, openai.PermissionDeniedError)):
-        return "clé ou droit refusé"
+        return "key or access denied"
     if isinstance(e, openai.APIStatusError):
         return f"HTTP {getattr(e, 'status_code', '?')}"
     return type(e).__name__
 
 
 def probe_models(name: str, *, timeout: float = 40.0, include_all: bool = False, workers: int = 4,
-                 prompt: str = "Réponds par le mot ok.", max_tokens: int = 40) -> List[dict]:
-    """Sonde chaque modèle listé par `GET /models` avec une requête triviale : lequel répond vraiment ?
+                 prompt: str = "Reply with the word ok.", max_tokens: int = 40) -> List[dict]:
+    """Probe each model listed by `GET /models` with a trivial request: which one really answers?
 
-    Le catalogue d'un provider gratuit n'est pas fiable : être LISTÉ ne garantit rien (NVIDIA : 32 modèles sur 47 en
-    404, d'autres expirent). Diagnostic seul : ne touche ni aux pauses, ni aux statistiques, ni aux quotas appris.
-    Chaque ligne : model, status (ok | raisonne | 404 non appelable | délai dépassé | …), latency_s, content_chars,
-    reasoning (le modèle écrit un raisonnement). « raisonne » = réponse vide à ce petit max_tokens : il faudra couper son
-    raisonnement (`model_options`) ou relever max_tokens avant de s'en servir."""
+    A free provider's catalog is not reliable: being LISTED guarantees nothing (NVIDIA: 32 models out of 47 return
+    404, others time out). Diagnostic only: touches neither pauses, nor statistics, nor learned quotas.
+    Each row: model, status (ok | reasoning | 404 not callable | timeout | …), latency_s, content_chars,
+    reasoning (the model writes some reasoning). "reasoning" = empty answer at this small max_tokens: its reasoning
+    must be turned off (`model_options`) or max_tokens raised before using it."""
     from concurrent.futures import ThreadPoolExecutor
 
     provider = _provider_by_name(name)
@@ -1102,7 +1102,7 @@ def probe_models(name: str, *, timeout: float = 40.0, include_all: bool = False,
     try:
         listed = sorted(m.id for m in client.models.list().data)
     except Exception:
-        listed = _models_for(provider, "HEAVY")          # liste indisponible : au moins les modèles du catalogue
+        listed = _models_for(provider, "HEAVY")          # list unavailable: at least the catalog models
     models = listed if include_all else [m for m in listed if not _NON_TEXT.search(m)]
 
     def probe(model: str) -> dict:
@@ -1112,17 +1112,17 @@ def probe_models(name: str, *, timeout: float = 40.0, include_all: bool = False,
                 model=model, messages=[{"role": "user", "content": prompt}], max_tokens=max_tokens, temperature=0,
                 **_call_options(provider, model))
             response = raw.parse()
-        except Exception as e:                           # noqa: BLE001  diagnostic : toute erreur est un résultat
+        except Exception as e:                           # noqa: BLE001  diagnostic: every error is a result
             return {"model": model, "status": _probe_outcome(e), "latency_s": round(time.perf_counter() - t0, 1),
                     "content_chars": 0, "reasoning": False}
         message = response.choices[0].message if response.choices else None
         text = ((message.content if message else "") or "").strip()
         reasoning = bool(message and (getattr(message, "reasoning_content", None)
                                       or (getattr(message, "model_extra", None) or {}).get("reasoning_content")))
-        return {"model": model, "status": "ok" if text else ("raisonne" if reasoning else "réponse vide"),
+        return {"model": model, "status": "ok" if text else ("reasoning" if reasoning else "empty response"),
                 "latency_s": round(time.perf_counter() - t0, 1), "content_chars": len(text), "reasoning": reasoning}
 
     with ThreadPoolExecutor(max_workers=max(1, min(workers, provider.get("max_concurrency", 2) + 2))) as pool:
         rows = list(pool.map(probe, models))
-    order = {"ok": 0, "raisonne": 1}
+    order = {"ok": 0, "reasoning": 1}
     return sorted(rows, key=lambda r: (order.get(r["status"], 2), r["latency_s"], r["model"]))

@@ -13,17 +13,17 @@
       "min_interval_s": 2
     },
     {
-      "name": "monprovider",
-      "label": "Mon provider",
-      "env_key": "MONPROVIDER_API_KEY",
-      "base_url": "https://api.exemple.com/v1",
-      "model_heavy": "gros-modele",
-      "model_light": "petit-modele",
+      "name": "myprovider",
+      "label": "My provider",
+      "env_key": "MYPROVIDER_API_KEY",
+      "base_url": "https://api.example.com/v1",
+      "model_heavy": "big-model",
+      "model_light": "small-model",
       "supports_tools": true,
       "timeout": 30,
       "quota_header": "x-ratelimit-remaining-tokens",
       "quota_min": 1000
     }
   ],
-  "order": ["monprovider"]
+  "order": ["myprovider"]
 }

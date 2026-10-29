@@ -1,12 +1,12 @@
-# Sécurité
+# Security
 
-## Signaler une faille
+## Reporting a vulnerability
 
-Ouvrez un [signalement privé](https://github.com/Maxichance/ricochet-llm/security/advisories/new) sur GitHub. Merci de ne pas publier la faille dans une issue avant correction.
+Open a [private report](https://github.com/Maxichance/ricochet-llm/security/advisories/new) on GitHub. Please don't disclose the vulnerability in a public issue before it is fixed.
 
-## Ce qu'il faut savoir en l'utilisant
+## What to know when using it
 
-- **Le tableau de bord n'a pas d'authentification.** Il écoute sur `127.0.0.1` uniquement ; `--allow-remote` est refusé par défaut. Si vous l'exposez, placez-le derrière un proxy authentifié : ses boutons consomment vos quotas.
-- **Les clés restent dans `.env`**, qui est ignoré par git. Ne le publiez jamais. Aucune clé n'est renvoyée par l'API (`/api/status`, `/api/search/status`).
-- **`RICOCHET_PLUGIN` exécute du code tel quel** : ne chargez que du code de confiance.
-- **Vos requêtes partent chez des tiers.** Plusieurs offres gratuites journalisent ou réutilisent les échanges ; voir le README. `ricochet_llm.privacy` repère les données personnelles évidentes avant envoi, sans garantie d'exhaustivité.
+- **The dashboard has no authentication.** It only listens on `127.0.0.1`; `--allow-remote` is refused by default. If you expose it, put it behind an authenticated proxy: its buttons consume your quotas.
+- **Keys stay in `.env`**, which git ignores. Never publish it. No key is returned by the API (`/api/status`, `/api/search/status`).
+- **`RICOCHET_PLUGIN` runs code as is**: only load code you trust.
+- **Your requests go to third parties.** Several free tiers log or reuse exchanges; see the README. `ricochet_llm.privacy` spots obvious personal data before sending, with no guarantee of completeness.

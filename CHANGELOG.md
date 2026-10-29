@@ -1,33 +1,33 @@
 # Changelog
 
 ## 0.5.0
-Le paquet s'appelle `ricochet-llm` : le module s'importe sous `ricochet_llm`, la commande est `ricochet-llm`. Le tableau de bord devient une dépendance optionnelle (`ricochet-llm[server]`).
-Retours d'usage sur de vrais providers depuis le 0.4.0.
-- **Recherche Web** (`ricochet_llm.search`, `web_search`, `register_search_tool`, `python -m ricochet_llm search`, `GET /api/search/status`) : Exa, Tavily et LangSearch derrière une interface, bascule sur un refus, quota suivi sur disque avec arrêt à 90 % du plafond gratuit, outil `search_web` pour les modèles. `docs/RECHERCHE_WEB.md` : les providers retenus et ceux écartés, avec la raison. Adaptateurs testés contre des réponses simulées uniquement.
-- **Refus mieux classés** : 402 et limite par minute à zéro (offre non activée) = pause d'une heure ; 429 sur un plafond journalier = pause d'une heure au lieu d'une minute ; `x-ratelimit-reset-tokens` lu quand il n'y a pas de `Retry-After`.
-- **Budget de jetons par modèle** lu dans les en-têtes des réponses réussies : un modèle qui n'a plus de quoi traiter la demande n'est pas appelé ; la limite annoncée s'apprend sans attendre un 413.
-- **`read_json`** : lecture tolérante d'une réponse JSON (écrite deux fois, champ en trop, `null` parasite) sans jamais deviner une réponse coupée.
-- **`find_personal_data` / `check_conversation`** : repère e-mail, téléphone, IBAN, carte, sécurité sociale (clés de contrôle) avant envoi à un free tier.
-- Les blocs `<think>...</think>` ne sont plus rendus comme réponse. Gemini : chaîne `gemini-3.6-flash`, `3.5-flash`, `3.1-pro-preview`. Gonka passe après OpenRouter. `RICOCHET_ORDER` règle la tête de liste sans fichier. `httpx` devient une dépendance directe.
-- 212 tests (aucun réseau).
-- Hors périmètre : le client Gemini natif (appels d'outils et écriture en direct, `thoughtSignature`), qui suppose une boucle asynchrone et un format propre à Gemini ; Gemini reste appelé en format OpenAI, sans outils.
+The package is named `ricochet-llm`: the module is imported as `ricochet_llm` and the command is `ricochet-llm`. The dashboard becomes an optional dependency (`ricochet-llm[server]`).
+Lessons from real-provider usage since 0.4.0.
+- **Web search** (`ricochet_llm.search`, `web_search`, `register_search_tool`, `python -m ricochet_llm search`, `GET /api/search/status`): Exa, Tavily and LangSearch behind one interface, failover on refusal, quota tracked on disk with a stop at 90% of the free allowance, `search_web` tool for models. `docs/WEB_SEARCH.md`: the providers kept and those set aside, with the reason. Adapters tested against simulated responses only.
+- **Better-classified refusals**: 402 and a per-minute limit of zero (plan not enabled) = one-hour pause; 429 on a daily cap = one-hour pause instead of one minute; `x-ratelimit-reset-tokens` read when there is no `Retry-After`.
+- **Per-model token budget** read from the headers of successful responses: a model that can't handle the request is not called; the advertised limit is learned without waiting for a 413.
+- **`read_json`**: tolerant reading of a JSON answer (written twice, extra field, stray `null`) that never guesses at a truncated answer.
+- **`find_personal_data` / `check_conversation`**: spots emails, phone numbers, IBANs, card numbers and social security numbers (check digits) before sending to a free tier.
+- `<think>...</think>` blocks are no longer returned as the answer. Gemini: chain `gemini-3.6-flash`, `3.5-flash`, `3.1-pro-preview`. Gonka now comes after OpenRouter. `RICOCHET_ORDER` sets the head of the list without a file. `httpx` becomes a direct dependency.
+- 212 tests (no network).
+- Out of scope: the native Gemini client (tool calls and live streaming, `thoughtSignature`), which assumes an async loop and a Gemini-specific format; Gemini is still called in OpenAI format, without tools.
 
 ## 0.4.0
-- **Lecture par lot** : `generate()` (appel isolé : bascule entre providers et entre modèles, jamais de réponse vide, délai réglable qui ne fait que s'allonger, `only` / `prefer`) et `run_parallel()` (travailleurs par provider, plafond de simultanés, écart entre départs, provider en pause sans travail, arrêt propre).
-- **État par modèle** : un 429, un 413 ou une réponse vide n'écarte qu'un modèle ; le provider n'est en pause que si plus aucun de ses modèles ne répond. Le 413 apprend la limite du modèle.
-- **Catalogue** : `extra_models`, `model_options` (couper le raisonnement des Nemotron : `enable_thinking: false`), `token_limits`, `max_concurrency`, `min_interval_s`, `env_required`, `env_aliases`, adresse à gabarit `{VARIABLE}`.
-- **Providers** : NVIDIA mis à jour (ultra-550b, super-vl-120b, bolt-e4b), Groq (3 modèles, budget par modèle), Ollama, **Cloudflare Workers AI** et **Gonka** ajoutés.
-- `python -m ricochet_llm models <provider>` : quels modèles listés répondent vraiment. `docs/GUIDE.md` : pièges de la lecture par lot.
-- 149 tests (aucun réseau).
+- **Batch reading**: `generate()` (single call: failover between providers and between models, never an empty answer, adjustable timeout that only ever grows, `only` / `prefer`) and `run_parallel()` (workers per provider, concurrency cap, delay between starts, provider in pause gets no work, clean stop).
+- **Per-model state**: a 429, a 413 or an empty answer only sets one model aside; the provider is paused only when none of its models answers. A 413 teaches the model's limit.
+- **Catalog**: `extra_models`, `model_options` (turn off Nemotron reasoning: `enable_thinking: false`), `token_limits`, `max_concurrency`, `min_interval_s`, `env_required`, `env_aliases`, templated address `{VARIABLE}`.
+- **Providers**: NVIDIA updated (ultra-550b, super-vl-120b, bolt-e4b), Groq (3 models, per-model budget), Ollama, **Cloudflare Workers AI** and **Gonka** added.
+- `python -m ricochet_llm models <provider>`: which listed models actually answer. `docs/GUIDE.md`: batch-reading pitfalls.
+- 149 tests (no network).
 
 ## 0.3.0
-- Providers configurables sans toucher au code (`providers.json`, validé) ; registre d'outils `@tool` ; plugins (`RICOCHET_PLUGIN`) ; prompt système via `set_system_prompt`.
-- Nouvelle interface : fond beige, une ligne par provider (barre de quota + KPI), détail au clic.
-- Le serveur refuse d'écouter hors de la machine locale sans `--allow-remote`.
-- Suppression du code métier d'exemple (`rechercher_client`) ; ajout de `examples/`, CI, lint (ruff), 88+ tests.
+- Providers configurable without touching the code (`providers.json`, validated); `@tool` registry; plugins (`RICOCHET_PLUGIN`); system prompt via `set_system_prompt`.
+- New interface: beige background, one row per provider (quota bar + KPIs), details on click.
+- The server refuses to listen outside the local machine without `--allow-remote`.
+- Removed the sample business code (`rechercher_client`); added `examples/`, CI, lint (ruff), 88+ tests.
 
 ## 0.2.0
-- Paquet Python, tableau de bord web, providers NVIDIA NIM / Ollama Cloud / OpenRouter, statistiques et journal.
+- Python package, web dashboard, NVIDIA NIM / Ollama Cloud / OpenRouter providers, statistics and event log.
 
 ## 0.1.0
-- Routeur multi-providers avec bascule sur quota et tool calling (fichier unique).
+- Multi-provider router with quota failover and tool calling (single file).

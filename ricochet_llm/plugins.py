@@ -1,11 +1,11 @@
 """
-Chargement de votre code métier (outils, prompt système) sans modifier le paquet.
+Loads your own code (tools, system prompt) without modifying the package.
 
-  RICOCHET_PLUGIN=mon_module            module importable (dans le PYTHONPATH ou le dossier courant)
-  RICOCHET_PLUGIN=chemin/vers/outils.py fichier Python
+  RICOCHET_PLUGIN=my_module          importable module (on PYTHONPATH or in the current directory)
+  RICOCHET_PLUGIN=path/to/tools.py   Python file
 
-Le plugin enregistre ses outils avec `@tool` et peut appeler `set_system_prompt(...)`.
-Attention : le plugin est du code exécuté tel quel — ne chargez que du code de confiance.
+The plugin registers its tools with `@tool` and may call `set_system_prompt(...)`.
+Warning: the plugin is run as-is — only load trusted code.
 """
 import importlib
 import importlib.util
@@ -20,11 +20,11 @@ _loaded: Set[str] = set()
 
 
 class PluginError(RuntimeError):
-    """Plugin introuvable ou qui échoue au chargement."""
+    """Plugin not found or failing to load."""
 
 
 def load_plugin(target: Optional[str] = None) -> Optional[str]:
-    """Charge `target` (ou $RICOCHET_PLUGIN) une seule fois. Retourne ce qui a été chargé, ou None."""
+    """Loads `target` (or $RICOCHET_PLUGIN) once. Returns what was loaded, or None."""
     target = (target or os.getenv("RICOCHET_PLUGIN") or "").strip()
     if not target or target in _loaded:
         return None
@@ -32,7 +32,7 @@ def load_plugin(target: Optional[str] = None) -> Optional[str]:
         if target.endswith(".py") or "/" in target or "\\" in target:
             path = Path(target).expanduser().resolve()
             if not path.is_file():
-                raise PluginError(f"Plugin introuvable : {path}")
+                raise PluginError(f"Plugin not found: {path}")
             spec = importlib.util.spec_from_file_location(f"ricochet_plugin_{path.stem}", path)
             module = importlib.util.module_from_spec(spec)
             sys.modules[spec.name] = module
@@ -42,7 +42,7 @@ def load_plugin(target: Optional[str] = None) -> Optional[str]:
     except PluginError:
         raise
     except Exception as e:
-        raise PluginError(f"Échec du chargement du plugin {target!r} : {type(e).__name__}: {e}") from e
+        raise PluginError(f"Failed to load plugin {target!r}: {type(e).__name__}: {e}") from e
     _loaded.add(target)
-    logger.info("Plugin chargé : %s", target)
+    logger.info("Plugin loaded: %s", target)
     return target

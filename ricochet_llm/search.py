@@ -1,31 +1,31 @@
 """
-Recherche Web par API gratuite, pour tout agent du routeur : les modèles ne savent pas chercher, ils n'appellent que les
-outils que l'application leur donne. Cette brique fournit cet outil, avec la logique du routeur de modèles.
+Web search through free APIs, for any agent of the router: models cannot search, they only call the tools the
+application gives them. This module provides that tool, with the model router's logic.
 
     from ricochet_llm import web_search, register_search_tool       # web_search = ricochet_llm.search.search
 
-    r = web_search("comparatif des routeurs LLM gratuits", n=5, content=True)   # ne lève jamais : `r.status` dit ce qui s'est passé
-    for page in r.results:                                        # {"title", "url", "snippet", "content" (si fourni)}
+    r = web_search("comparison of free LLM routers", n=5, content=True)   # never raises: `r.status` says what happened
+    for page in r.results:                                        # {"title", "url", "snippet", "content" (if provided)}
         ...
-    register_search_tool()    # l'outil `search_web` devient appelable par les modèles de chat()
+    register_search_tool()    # the `search_web` tool becomes callable by the models of chat()
 
-- **Plusieurs providers, une seule interface.** `search()` essaie ceux dont la clé est présente, dans l'ordre, bascule sur
-  un refus (quota, clé, panne) et rend toujours le même résultat.
-- **Gratuité durable seulement.** Un provider n'entre dans la liste que si son offre gratuite se RENOUVELLE et ne demande ni
-  carte ni facturation (documentation officielle, relevé du 28/10/2026, voir `PROVIDERS`). Un crédit d'essai qui s'épuise
-  n'en est pas une : Jina, Serper et Linkup sont écartés, avec la raison dans docs/RECHERCHE_WEB.md.
-- **Le quota est suivi AVANT d'être atteint.** Les compteurs (crédits, dollars) sont écrits sur disque et on s'arrête à 90 %
-  du plafond gratuit, au lieu de dépendre de ce que fait le provider quand il est épuisé. Le coût réel est lu dans la
-  réponse quand il la donne. Fichier : `~/.ricochet/search_usage.json` (`RICOCHET_SEARCH_STATE`) : dans le dossier de
-  l'utilisateur, car le quota appartient à la CLÉ, pas au projet qui l'utilise.
-- **Aucun appel réseau pour connaître l'état** : `status()` lit les clés, les compteurs et les pauses.
-- **Un moteur de secours optionnel** (`fallback`) pour quand aucune API n'est utilisable.
+- **Several providers, one interface.** `search()` tries those whose key is present, in order, fails over on a
+  refusal (quota, key, outage) and always returns the same result.
+- **Lasting free tiers only.** A provider is listed only if its free offer RENEWS and requires neither a card nor
+  billing (official documentation, snapshot of 2026-10-28, see `PROVIDERS`). A trial credit that runs out is not one:
+  Jina, Serper and Linkup are excluded, with the reason in docs/WEB_SEARCH.md.
+- **The quota is tracked BEFORE it is reached.** The counters (credits, dollars) are written to disk and we stop at
+  90% of the free ceiling, instead of depending on what the provider does once exhausted. The real cost is read from
+  the response when it provides one. File: `~/.ricochet/search_usage.json` (`RICOCHET_SEARCH_STATE`): in the user's
+  home folder, because the quota belongs to the KEY, not to the project using it.
+- **No network call to know the state**: `status()` reads the keys, the counters and the pauses.
+- **An optional backup engine** (`fallback`) for when no API is usable.
 
-Ce qui revient n'est jamais une réponse d'IA : ce sont des pages. Un agent qui s'en sert produit une simulation, pas la
-mesure de ce que répond un assistant grand public.
+What comes back is never an AI answer: it is pages. An agent that uses it produces a simulation, not a measure of what
+a consumer assistant answers.
 
-Variables : EXA_API_KEY, TAVILY_API_KEY, LANGSEARCH_API_KEY (au moins une) ; RICOCHET_SEARCH_ORDER (« tavily,exa ») ;
-RICOCHET_SEARCH_STATE ; RICOCHET_SEARCH_COUNTRY (Tavily, ex. « france ») ; RICOCHET_EXA_TYPE (défaut « auto »).
+Variables: EXA_API_KEY, TAVILY_API_KEY, LANGSEARCH_API_KEY (at least one); RICOCHET_SEARCH_ORDER ("tavily,exa");
+RICOCHET_SEARCH_STATE; RICOCHET_SEARCH_COUNTRY (Tavily, e.g. "france"); RICOCHET_EXA_TYPE (default "auto").
 """
 import calendar
 import json
@@ -50,36 +50,36 @@ REQUEST_TIMEOUT_S = 20.0
 SNIPPET_MAX = 300
 CONTENT_MAX = 4000
 RESULTS_MAX = 10
-QUOTA_MARGIN = 0.9               # on s'arrête à 90 % du quota gratuit
+QUOTA_MARGIN = 0.9               # stop at 90% of the free quota
 COOLDOWN_RATE_LIMIT_S = 60.0
 COOLDOWN_TRANSIENT_S = 30.0
-COOLDOWN_CONFIG_S = 900.0        # 401 / 403 : clé à corriger
+COOLDOWN_CONFIG_S = 900.0        # 401 / 403: the key needs fixing
 STATE_ENV_VAR = "RICOCHET_SEARCH_STATE"
 ORDER_ENV_VAR = "RICOCHET_SEARCH_ORDER"
 
-# Relevé du 28/10/2026 dans la documentation officielle de chaque provider. Ces conditions changent : à revérifier.
-#   exa        : 10 $ de crédit, remis à 10 $ le 1er de chaque mois, « No payment method required » ; 402 à l'épuisement ;
-#                10 requêtes par seconde ; le prix d'une recherche est dans `costDollars` (auto : 7 $ les 1 000).
-#   tavily     : 1 000 crédits par mois, « No credit card required » ; 1 crédit par recherche simple ; 432 au plafond du plan.
-#   langsearch : plan gratuit à 0 $ ; allocation de jetons par jour remise à zéro à 00:00 UTC ; 5 requêtes par seconde ;
-#                le plafond en jetons n'est pas publié (il se lit dans le tableau de bord), on s'appuie sur le 429.
-# Conditions d'utilisation (stockage, réutilisation des résultats) : NON vérifiées pour ces trois providers, à faire lire
-# avant une montée en volume.
+# Snapshot of 2026-10-28 from each provider's official documentation. These terms change: re-check them.
+#   exa        : $10 of credit, reset to $10 on the 1st of each month, "No payment method required"; 402 when exhausted;
+#                10 requests per second; the price of a search is in `costDollars` (auto: $7 per 1,000).
+#   tavily     : 1,000 credits per month, "No credit card required"; 1 credit per basic search; 432 at the plan ceiling.
+#   langsearch : free plan at $0; daily token allowance reset at 00:00 UTC; 5 requests per second;
+#                the token ceiling is not published (see the dashboard), so we rely on the 429.
+# Terms of use (storage, reuse of results): NOT verified for these three providers, to be read before scaling up
+# volume.
 PROVIDERS: Dict[str, dict] = {
     "exa": {
         "label": "Exa", "env_key": "EXA_API_KEY", "url": "https://api.exa.ai/search",
         "period": "month", "unit": "dollars", "quota": 10.0, "default_cost": 0.007,
-        "note": "10 $ de crédit par mois, sans moyen de paiement. Conditions de réutilisation des résultats à lire.",
+        "note": "$10 of credit per month, no payment method. Terms for reusing results to be read.",
     },
     "tavily": {
         "label": "Tavily", "env_key": "TAVILY_API_KEY", "url": "https://api.tavily.com/search",
         "period": "month", "unit": "credits", "quota": 1000.0, "default_cost": 1.0,
-        "note": "1 000 crédits par mois, sans carte. Comportement à l'épuisement non documenté : le compteur local s'arrête avant.",
+        "note": "1,000 credits per month, no card. Behavior at exhaustion not documented: the local counter stops first.",
     },
     "langsearch": {
         "label": "LangSearch", "env_key": "LANGSEARCH_API_KEY", "url": "https://api.langsearch.com/v1/web-search",
-        "period": "day", "unit": "jetons", "quota": None, "default_cost": 0.0,
-        "note": "Allocation de jetons par jour (00:00 UTC), plafond visible dans le tableau de bord. Aucune page de conditions trouvée.",
+        "period": "day", "unit": "tokens", "quota": None, "default_cost": 0.0,
+        "note": "Daily token allowance (00:00 UTC), ceiling visible in the dashboard. No terms page found.",
     },
 }
 DEFAULT_ORDER = ("exa", "tavily", "langsearch")
@@ -89,24 +89,24 @@ DEFAULT_ORDER = ("exa", "tavily", "langsearch")
 class SearchResult:
     status: str                                            # SUCCESS | EMPTY | BLOCKED | RATE_LIMITED | ERROR
     query: str
-    results: List[dict] = field(default_factory=list)      # {"title", "url", "snippet", "content" (si le provider le donne)}
+    results: List[dict] = field(default_factory=list)      # {"title", "url", "snippet", "content" (if the provider gives it)}
     error: Optional[str] = None
-    engine: str = ""                                       # nom du provider qui a répondu
-    cost: float = 0.0                                      # crédits, dollars ou jetons selon le provider
+    engine: str = ""                                       # name of the provider that answered
+    cost: float = 0.0                                      # credits, dollars or tokens depending on the provider
 
     def to_dict(self) -> dict:
         return asdict(self)
 
 
 class _Refusal(Exception):
-    """Le provider n'a pas rendu de résultats : on bascule sur le suivant."""
+    """The provider returned no results: fail over to the next one."""
 
     def __init__(self, status: str, reason: str, pause: float, exhausted: bool = False):
         super().__init__(reason)
         self.status, self.reason, self.pause, self.exhausted = status, reason, pause, exhausted
 
 
-# ───────────────────────── État : compteurs sur disque, pauses en mémoire ─────────────────────────
+# ───────────────────────── State: counters on disk, pauses in memory ─────────────────────────
 
 _lock = threading.Lock()
 _cooldown: Dict[str, float] = {}
@@ -141,7 +141,7 @@ def _read_state() -> dict:
 
 
 def _write_state(state: dict) -> None:
-    """Écriture atomique : un compteur à moitié écrit ferait perdre toute la consommation du mois."""
+    """Atomic write: a half-written counter would lose the whole month's consumption."""
     path = state_file()
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=path.name, suffix=".tmp")
@@ -155,23 +155,23 @@ def _write_state(state: dict) -> None:
 
 
 def used(name: str) -> float:
-    """Quantité déjà consommée dans la période en cours (mois ou jour) chez ce provider."""
+    """Amount already consumed in the current period (month or day) at this provider."""
     return float(_read_state().get(name, {}).get(_period_key(PROVIDERS[name]), 0.0) or 0.0)
 
 
 def _count(name: str, amount: float, exhausted: bool = False) -> None:
-    """Ajoute `amount` au compteur de la période ; `exhausted` le pousse au plafond (le provider a dit stop)."""
+    """Adds `amount` to the period counter; `exhausted` pushes it to the ceiling (the provider said stop)."""
     spec = PROVIDERS[name]
     with _lock:
         state = _read_state()
         period = _period_key(spec)
         current = float(state.get(name, {}).get(period, 0.0) or 0.0)
         new = max(current + amount, float(spec["quota"])) if exhausted and spec["quota"] else current + amount
-        state[name] = {period: round(new, 6)}              # les périodes passées sont oubliées : le fichier reste minuscule
+        state[name] = {period: round(new, 6)}              # past periods are forgotten: the file stays tiny
         try:
             _write_state(state)
         except OSError:
-            logger.warning("recherche : compteur de %s non écrit sur disque", name)
+            logger.warning("search: counter for %s not written to disk", name)
 
 
 def _quota_reached(name: str) -> bool:
@@ -180,7 +180,7 @@ def _quota_reached(name: str) -> bool:
 
 
 def reset() -> None:
-    """Remet l'état à zéro : pauses ET compteurs (tests)."""
+    """Resets the state: pauses AND counters (tests)."""
     _cooldown.clear()
     _last_error.clear()
     try:
@@ -196,7 +196,7 @@ def _key(name: str) -> str:
 def _pause(name: str, seconds: float, reason: str) -> None:
     _cooldown[name] = time.monotonic() + max(1.0, seconds)
     _last_error[name] = reason[:200]
-    logger.warning("recherche : %s écarté %.0f s (%s)", name, seconds, reason[:120])
+    logger.warning("search: %s benched for %.0f s (%s)", name, seconds, reason[:120])
 
 
 def _paused(name: str) -> bool:
@@ -216,13 +216,13 @@ def _order() -> List[str]:
 
 
 def available(only=None) -> List[str]:
-    """Providers utilisables maintenant : clé présente, pas en pause, quota gratuit non atteint."""
+    """Providers usable now: key present, not paused, free quota not reached."""
     base = [n for n in (only if only is not None else _order()) if n in PROVIDERS]
     return [n for n in base if _key(n) and not _paused(n) and not _quota_reached(n)]
 
 
 def status() -> dict:
-    """État des providers, pour un écran d'administration. Aucun appel réseau, aucune clé dans la réponse."""
+    """State of the providers, for an admin screen. No network call, no key in the response."""
     out = []
     ready = available()
     for name in _order():
@@ -236,7 +236,7 @@ def status() -> dict:
     return {"providers": out, "order": _order()}
 
 
-# ───────────────────────── Adaptateurs : un par provider ─────────────────────────
+# ───────────────────────── Adapters: one per provider ─────────────────────────
 
 def _text(value: Any, maxi: int) -> str:
     return re.sub(r"\s+", " ", str(value or "")).strip()[:maxi]
@@ -310,7 +310,7 @@ def _read_langsearch(data: dict) -> Tuple[List[dict], float]:
     values = ((data.get("data") or {}).get("webPages") or {}).get("value") or []
     pages = []
     for r in values:
-        # `text` remplace `snippet` quand il est demandé : l'extrait vient alors du texte
+        # `text` replaces `snippet` when requested: the snippet then comes from the text
         page = _page(r.get("name"), r.get("url"), r.get("snippet") or r.get("text"), r.get("text"))
         if page:
             pages.append(page)
@@ -333,14 +333,14 @@ def _retry_after(response: httpx.Response) -> Optional[float]:
 
 
 def _classify(name: str, response: httpx.Response) -> _Refusal:
-    """Traduit un statut HTTP d'échec en décision : combien de temps écarter le provider, et pourquoi."""
+    """Turns a failing HTTP status into a decision: how long to bench the provider, and why."""
     code = response.status_code
     if code in (401, 403):
-        return _Refusal(BLOCKED, f"clé refusée (HTTP {code})", COOLDOWN_CONFIG_S)
-    if code in (402, 432, 433):     # Exa : crédits épuisés ; Tavily : plafond du plan ou de la clé
-        return _Refusal(RATE_LIMITED, f"quota épuisé (HTTP {code})", _seconds_until_renewal(PROVIDERS[name]), exhausted=True)
+        return _Refusal(BLOCKED, f"key refused (HTTP {code})", COOLDOWN_CONFIG_S)
+    if code in (402, 432, 433):     # Exa: credits exhausted; Tavily: plan or key ceiling
+        return _Refusal(RATE_LIMITED, f"quota exhausted (HTTP {code})", _seconds_until_renewal(PROVIDERS[name]), exhausted=True)
     if code == 429:
-        return _Refusal(RATE_LIMITED, "limite de débit (HTTP 429)", _retry_after(response) or COOLDOWN_RATE_LIMIT_S)
+        return _Refusal(RATE_LIMITED, "rate limit (HTTP 429)", _retry_after(response) or COOLDOWN_RATE_LIMIT_S)
     return _Refusal(ERROR, f"HTTP {code}", COOLDOWN_TRANSIENT_S)
 
 
@@ -350,16 +350,16 @@ def _call(name: str, query: str, n: int, content: bool, client: httpx.Client) ->
     try:
         response = client.post(PROVIDERS[name]["url"], json=body, headers=headers)
     except httpx.TimeoutException:
-        raise _Refusal(ERROR, "délai dépassé", COOLDOWN_TRANSIENT_S) from None
+        raise _Refusal(ERROR, "timeout", COOLDOWN_TRANSIENT_S) from None
     except httpx.HTTPError as exc:
-        raise _Refusal(ERROR, f"réseau : {type(exc).__name__}", COOLDOWN_TRANSIENT_S) from None
+        raise _Refusal(ERROR, f"network: {type(exc).__name__}", COOLDOWN_TRANSIENT_S) from None
     if response.status_code != 200:
         raise _classify(name, response)
     try:
         data = response.json()
         pages, cost = read(data if isinstance(data, dict) else {})
     except ValueError:
-        raise _Refusal(ERROR, "réponse illisible", COOLDOWN_TRANSIENT_S) from None
+        raise _Refusal(ERROR, "unreadable response", COOLDOWN_TRANSIENT_S) from None
     seen: set = set()
     unique = [p for p in pages if not (p["url"] in seen or seen.add(p["url"]))]
     return SearchResult(SUCCESS if unique else EMPTY, query, unique, None, name, cost)
@@ -370,17 +370,17 @@ def _call(name: str, query: str, n: int, content: bool, client: httpx.Client) ->
 def search(query: str, n: int = 6, content: bool = False, only=None,
            fallback: Optional[Callable[[str, int], SearchResult]] = None,
            client: Optional[httpx.Client] = None) -> SearchResult:
-    """Une recherche sur le premier provider gratuit qui répond.
+    """One search on the first free provider that answers.
 
-    content   demande, quand le provider sait le donner, un extrait de texte de chaque page (évite de la télécharger)
-    only      noms de providers permis (None = tous ceux dont la clé est présente, dans l'ordre)
-    fallback  fonction `(query, n)` appelée quand aucune API n'est utilisable ; elle rend aussi un `SearchResult`
-    client    `httpx.Client` à réutiliser (sinon un client est ouvert pour l'appel)
+    content   asks, when the provider can give it, for a text excerpt of each page (saves downloading it)
+    only      allowed provider names (None = all those whose key is present, in order)
+    fallback  function `(query, n)` called when no API is usable; it also returns a `SearchResult`
+    client    `httpx.Client` to reuse (otherwise a client is opened for the call)
 
-    Ne lève pas d'exception : `status` dit ce qui s'est passé."""
+    Never raises: `status` says what happened."""
     query = " ".join((query or "").split())[:300]
     if not query:
-        return SearchResult(ERROR, query, error="requête vide")
+        return SearchResult(ERROR, query, error="empty query")
     n = max(1, min(int(n), RESULTS_MAX))
     last: Optional[_Refusal] = None
     own = client is None
@@ -404,26 +404,26 @@ def search(query: str, n: int = 6, content: bool = False, only=None,
         return fallback(query, n)
     if last is not None:
         return SearchResult(last.status, query, error=last.reason)
-    return SearchResult(ERROR, query, error="aucun moteur de recherche configuré ou disponible")
+    return SearchResult(ERROR, query, error="no search engine configured or available")
 
 
 def search_web(query: str) -> dict:
-    """Cherche sur le Web et rend jusqu'à 6 résultats (titre, url, extrait, parfois le contenu de la page).
+    """Searches the Web and returns up to 6 results (title, url, snippet, sometimes the page content).
 
     Args:
-        query: Termes de la recherche
+        query: Search terms
     """
     r = search(query, n=6, content=True)
     if r.status == SUCCESS:
         return {"results": r.results}
     if r.status == EMPTY:
         return {"results": []}
-    return {"error": "recherche indisponible", "status": r.status}    # jamais la raison ni le nom du moteur
+    return {"error": "search unavailable", "status": r.status}    # never the reason nor the engine name
 
 
 def register_search_tool(name: str = "search_web", replace: bool = True) -> None:
-    """Rend `search_web` appelable par les modèles de `chat()` (outil du registre). Sans effet utile si aucune clé de
-    recherche n'est configurée : l'outil répond alors « recherche indisponible »."""
+    """Makes `search_web` callable by the models of `chat()` (registry tool). Of no real use if no search key is
+    configured: the tool then answers "search unavailable"."""
     from .tools import registry
     registry.register(search_web, name=name, replace=replace)
 

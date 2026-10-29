@@ -1,4 +1,4 @@
-"""Catalogue des providers : validation et surcharge par providers.json."""
+"""Provider catalog: validation and overrides through providers.json."""
 import json
 import os
 import sys
@@ -20,7 +20,7 @@ class CatalogTests(unittest.TestCase):
         patcher = mock.patch.dict(os.environ, env, clear=True)
         patcher.start()
         self.addCleanup(patcher.stop)
-        cwd = mock.patch.object(Path, "cwd", return_value=Path(self.dir.name))   # pas de providers.json ambiant
+        cwd = mock.patch.object(Path, "cwd", return_value=Path(self.dir.name))   # no ambient providers.json
         cwd.start()
         self.addCleanup(cwd.stop)
 
@@ -48,22 +48,22 @@ class CatalogTests(unittest.TestCase):
 
     def test_override_existing_provider_keeps_other_fields(self):
         base = [s for s in load_specs() if s["name"] == "groq"][0]
-        path = self.config({"providers": [{"name": "groq", "model_heavy": "autre", "quota_min": 10}]})
+        path = self.config({"providers": [{"name": "groq", "model_heavy": "other", "quota_min": 10}]})
         spec = [s for s in load_specs(path) if s["name"] == "groq"][0]
-        self.assertEqual((spec["model_heavy"], spec["quota_min"], spec["base_url"]), ("autre", 10, base["base_url"]))
+        self.assertEqual((spec["model_heavy"], spec["quota_min"], spec["base_url"]), ("other", 10, base["base_url"]))
 
     def test_disable_add_and_order(self):
         path = self.config({
             "providers": [{"name": "cerebras", "enabled": False},
-                          {"name": "nouveau", "env_key": "N_KEY", "base_url": "http://localhost:1234/v1", "model_heavy": "m"}],
-            "order": ["nouveau", "mistral"],
+                          {"name": "newone", "env_key": "N_KEY", "base_url": "http://localhost:1234/v1", "model_heavy": "m"}],
+            "order": ["newone", "mistral"],
         })
         names = self.names(path=path)
         self.assertNotIn("cerebras", names)
-        self.assertEqual(names[:3], ["nouveau", "mistral", "groq"])
+        self.assertEqual(names[:3], ["newone", "mistral", "groq"])
 
     def test_disabling_unknown_provider_is_ignored(self):
-        path = self.config({"providers": [{"name": "inconnu", "enabled": False}]})
+        path = self.config({"providers": [{"name": "unknown", "enabled": False}]})
         self.assertEqual(self.names(path=path), self.names())
 
     def test_cwd_file_and_env_var_are_discovered(self):
@@ -71,24 +71,24 @@ class CatalogTests(unittest.TestCase):
             json.dumps({"providers": [{"name": "groq", "enabled": False}]}), encoding="utf-8")
         self.assertNotIn("groq", self.names())
         other = self.config({"providers": [{"name": "nvidia", "enabled": False}]})
-        os.environ[catalog.CONFIG_ENV_VAR] = other                    # la variable prime sur le fichier du dossier
+        os.environ[catalog.CONFIG_ENV_VAR] = other                    # the variable takes precedence over the directory file
         names = self.names()
         self.assertIn("groq", names)
         self.assertNotIn("nvidia", names)
 
     def test_errors_are_explicit(self):
         cases = {
-            "inconnu(s)": {"providers": [{"name": "groq", "model_heavyy": "x"}]},
-            "obligatoire": {"providers": [{"name": "new", "env_key": "K"}]},
+            "unknown": {"providers": [{"name": "groq", "model_heavyy": "x"}]},
+            "required": {"providers": [{"name": "new", "env_key": "K"}]},
             "http": {"providers": [{"name": "new", "env_key": "K", "base_url": "ftp://x", "model_heavy": "m"}]},
-            "minuscules": {"providers": [{"name": "Nouveau", "env_key": "K", "base_url": "https://x", "model_heavy": "m"}]},
+            "lowercase": {"providers": [{"name": "Newone", "env_key": "K", "base_url": "https://x", "model_heavy": "m"}]},
             "quota_min": {"providers": [{"name": "groq", "quota_min": -1}]},
-            "supports_tools": {"providers": [{"name": "groq", "supports_tools": "oui"}]},
+            "supports_tools": {"providers": [{"name": "groq", "supports_tools": "yes"}]},
             "timeout": {"providers": [{"name": "groq", "timeout": 0}]},
             "quota_labels": {"providers": [{"name": "groq", "quota_labels": ["a"]}]},
-            "order": {"order": ["fantome"]},
-            "name": {"providers": [{"label": "sans nom"}]},
-            "providers": {"providers": "pas une liste"},
+            "order": {"order": ["ghost"]},
+            "name": {"providers": [{"label": "no name"}]},
+            "providers": {"providers": "not a list"},
         }
         for fragment, payload in cases.items():
             with self.subTest(fragment):
@@ -98,13 +98,13 @@ class CatalogTests(unittest.TestCase):
 
     def test_bad_json_and_missing_file(self):
         with self.assertRaises(ConfigError):
-            load_specs(self.config("{pas du json"))
+            load_specs(self.config("{not json"))
         with self.assertRaises(ConfigError):
             load_specs(str(Path(self.dir.name) / "absent.json"))
 
 
 class MeasuredSettingsTests(CatalogTests):
-    """Réglages du catalogue : un futur changement ne doit pas passer inaperçu."""
+    """Catalog settings: a future change must not go unnoticed."""
 
     def spec(self, name):
         return next(s for s in load_specs() if s["name"] == name)
@@ -113,7 +113,7 @@ class MeasuredSettingsTests(CatalogTests):
         return {spec["model_heavy"], spec["model_light"], *spec["extra_models"]}
 
     def test_nemotron_models_that_reason_have_thinking_disabled(self):
-        """Sans cela le modèle dépense tout max_tokens à raisonner et rend un `content` vide."""
+        """Without this the model spends all of max_tokens reasoning and returns an empty `content`."""
         nv = self.spec("nvidia")
         off = {"extra_body": {"chat_template_kwargs": {"enable_thinking": False}}}
         for model in ("nvidia/nemotron-3-ultra-550b-a55b", "nvidia/nemotron-3.5-super-vl-120b-a12b"):
@@ -122,14 +122,14 @@ class MeasuredSettingsTests(CatalogTests):
 
     def test_nvidia_order_and_the_model_that_returned_empty_json_is_gone(self):
         nv = self.spec("nvidia")
-        self.assertEqual(nv["model_heavy"], "nvidia/nemotron-3-ultra-550b-a55b")        # le plus capable en premier
+        self.assertEqual(nv["model_heavy"], "nvidia/nemotron-3-ultra-550b-a55b")        # the most capable first
         self.assertEqual(nv["extra_models"][0], "nvidia/nemotron-3.5-super-vl-120b-a12b")
-        self.assertNotIn("nvidia/nemotron-3.5-lightning-30b-a3b", self.models_of(nv))   # JSON valide mais VIDE
+        self.assertNotIn("nvidia/nemotron-3.5-lightning-30b-a3b", self.models_of(nv))   # valid JSON but EMPTY
 
     def test_nvidia_runs_six_requests_at_once_below_forty_per_minute(self):
         nv = self.spec("nvidia")
         self.assertEqual(nv["max_concurrency"], 6)
-        self.assertLessEqual(60 / nv["min_interval_s"], 40)         # 2 s entre départs = 30 par minute au plus
+        self.assertLessEqual(60 / nv["min_interval_s"], 40)         # 2 s between starts = 30 per minute at most
 
     def test_groq_token_limits_cover_each_of_its_models(self):
         groq = self.spec("groq")
@@ -139,13 +139,13 @@ class MeasuredSettingsTests(CatalogTests):
     def test_gonka_is_throttled_to_its_six_requests_per_minute(self):
         gonka = self.spec("gonka")
         self.assertEqual(gonka["max_concurrency"], 1)
-        self.assertGreaterEqual(gonka["min_interval_s"], 10)        # 6 requêtes par minute = un départ toutes les 10 s
+        self.assertGreaterEqual(gonka["min_interval_s"], 10)        # 6 requests per minute = one start every 10 s
 
     def test_cloudflare_needs_the_account_id_and_accepts_known_aliases(self):
         cf = self.spec("cloudflare")
         self.assertEqual(cf["env_required"], ["CLOUDFLARE_ACCOUNT_ID"])
         self.assertIn("{CLOUDFLARE_ACCOUNT_ID}", cf["base_url"])
-        self.assertIn("CLOUDFLAIRE_ACCOUNT_ID", cf["env_aliases"]["CLOUDFLARE_ACCOUNT_ID"])   # faute de frappe vue dans un vrai .env
+        self.assertIn("CLOUDFLAIRE_ACCOUNT_ID", cf["env_aliases"]["CLOUDFLARE_ACCOUNT_ID"])   # typo seen in a real .env
 
     def test_options_and_limits_only_name_models_of_their_provider(self):
         for spec in load_specs():
@@ -158,15 +158,15 @@ class MeasuredSettingsTests(CatalogTests):
     def test_new_fields_are_validated(self):
         base = {"name": "x", "env_key": "K", "base_url": "https://x.io/v1", "model_heavy": "m"}
         cases = {
-            "extra_models": {"extra_models": "pas une liste"},
-            "model_options": {"model_options": {"m": "pas un objet"}},
-            "réglage(s) inconnu(s)": {"model_options": {"m": {"temperature": 1}}},
-            "extra_body": {"model_options": {"m": {"extra_body": "texte"}}},
+            "extra_models": {"extra_models": "not a list"},
+            "model_options": {"model_options": {"m": "not an object"}},
+            "unknown setting(s)": {"model_options": {"m": {"temperature": 1}}},
+            "extra_body": {"model_options": {"m": {"extra_body": "text"}}},
             "token_limits": {"token_limits": {"m": -5}},
             "max_concurrency": {"max_concurrency": 0},
             "min_interval_s": {"min_interval_s": -1},
             "env_required": {"env_required": "X"},
-            "env_aliases": {"env_aliases": {"K": "pas une liste"}},
+            "env_aliases": {"env_aliases": {"K": "not a list"}},
         }
         for fragment, extra in cases.items():
             with self.subTest(fragment):
@@ -176,12 +176,12 @@ class MeasuredSettingsTests(CatalogTests):
 
     def test_a_providers_json_can_set_thinking_off_for_a_new_model(self):
         path = self.config({"providers": [{
-            "name": "monnvidia", "env_key": "K", "base_url": "https://x.io/v1", "model_heavy": "gros",
-            "model_options": {"gros": {"extra_body": {"chat_template_kwargs": {"enable_thinking": False}}}},
-            "token_limits": {"gros": 8000}, "max_concurrency": 4, "min_interval_s": 1.5}]})
-        spec = next(s for s in load_specs(path) if s["name"] == "monnvidia")
-        self.assertEqual((spec["max_concurrency"], spec["min_interval_s"], spec["token_limits"]), (4, 1.5, {"gros": 8000}))
-        self.assertFalse(spec["model_options"]["gros"]["extra_body"]["chat_template_kwargs"]["enable_thinking"])
+            "name": "mynvidia", "env_key": "K", "base_url": "https://x.io/v1", "model_heavy": "big",
+            "model_options": {"big": {"extra_body": {"chat_template_kwargs": {"enable_thinking": False}}}},
+            "token_limits": {"big": 8000}, "max_concurrency": 4, "min_interval_s": 1.5}]})
+        spec = next(s for s in load_specs(path) if s["name"] == "mynvidia")
+        self.assertEqual((spec["max_concurrency"], spec["min_interval_s"], spec["token_limits"]), (4, 1.5, {"big": 8000}))
+        self.assertFalse(spec["model_options"]["big"]["extra_body"]["chat_template_kwargs"]["enable_thinking"])
 
 
 if __name__ == "__main__":

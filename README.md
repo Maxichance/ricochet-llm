@@ -5,217 +5,217 @@
   <img src="docs/img/logo-wordmark.png" alt="ricochet-llm" width="440">
 </picture>
 
-**Un seul appel. Plusieurs API gratuites. Zéro quota épuisé.**
+**One call. Several free APIs. No quota ever runs dry.**
 
-Le routeur LLM qui rebondit d'un provider gratuit à l'autre : quota atteint, modèle retiré, panne, réponse vide... votre code ne voit rien.
+The LLM router that bounces from one free provider to the next: quota hit, model retired, outage, empty answer... your code never notices.
 
 [![tests](https://github.com/Maxichance/ricochet-llm/actions/workflows/tests.yml/badge.svg)](https://github.com/Maxichance/ricochet-llm/actions/workflows/tests.yml)
 [![python](https://img.shields.io/badge/python-3.9%2B-1d3a8a.svg)](https://github.com/Maxichance/ricochet-llm/blob/main/pyproject.toml)
-[![licence MIT](https://img.shields.io/badge/licence-MIT-1d3a8a.svg)](https://github.com/Maxichance/ricochet-llm/blob/main/LICENSE)
-[![providers](https://img.shields.io/badge/providers-8%2B%20gratuits-1d3a8a.svg)](#les-providers)
+[![MIT license](https://img.shields.io/badge/license-MIT-1d3a8a.svg)](https://github.com/Maxichance/ricochet-llm/blob/main/LICENSE)
+[![providers](https://img.shields.io/badge/providers-8%2B%20free-1d3a8a.svg)](#providers)
 
-[Démarrage](#démarrage) · [Fonctionnalités](#fonctionnalités) · [Dans votre code](#dans-votre-code) · [Providers](#les-providers) · [Configuration](#configuration) · [Documentation](#documentation)
+[Getting started](#getting-started) · [Features](#features) · [In your code](#in-your-code) · [Providers](#providers) · [Configuration](#configuration) · [Documentation](#documentation)
 
 <br>
 
-<img src="docs/img/dashboard.png" alt="Tableau de bord de Ricochet : état de chaque provider, quotas, console de test et journal" width="860">
+<img src="docs/img/dashboard.png" alt="Ricochet dashboard: status of each provider, quotas, test console and event log" width="860">
 
-<sub>Le tableau de bord (données de démonstration) : quota de chaque provider, pauses, console avec la bascule en direct, journal.</sub>
+<sub>The dashboard (demo data): each provider's quota, pauses, a console showing the live failover, and the event log.</sub>
 
 </div>
 
 <br>
 
-## Pourquoi
+## Why
 
-Les offres gratuites des API de LLM sont généreuses, mais chacune a ses limites : quota par minute ou par jour, modèles qui disparaissent, erreurs 429, réponses vides, délais qui explosent. Les enchaîner à la main, c'est du code fragile.
+Free LLM API tiers are generous, but each one has its limits: per-minute or per-day quotas, models that disappear, 429 errors, empty answers, latency spikes. Chaining them by hand makes for fragile code.
 
-Ricochet met tout cela derrière **une seule interface**. Il choisit le provider et le modèle, surveille les quotas, écarte ce qui ne répond plus et réessaie ailleurs, sans jamais perdre la conversation.
+Ricochet puts all of it behind **a single interface**. It picks the provider and the model, tracks quotas, sets aside whatever stops answering and retries elsewhere, without ever losing the conversation.
 
 ```
- votre code ──►  chat()  ·  generate()  ·  run_parallel()  ·  web_search()
+ your code ──►  chat()  ·  generate()  ·  run_parallel()  ·  web_search()
                                    │
                           ┌────────▼────────┐
-                          │    Ricochet     │   429 · 402 · 5xx · réponse vide · quota bas
-                          │  choisit · suit │──────────────────────┐
-                          │  bascule        │                      │ rebondit : modèle suivant,
-                          └────────┬────────┘                      │ puis provider suivant
+                          │    Ricochet     │   429 · 402 · 5xx · empty answer · low quota
+                          │  picks · tracks │──────────────────────┐
+                          │  fails over     │                      │ bounces: next model,
+                          └────────┬────────┘                      │ then next provider
         ┌───────┬────────┬─────────┼──────────┬─────────┐          │
       Groq   NVIDIA   Ollama   Cloudflare  OpenRouter  Gemini ... ◄┘
 ```
 
-## Fonctionnalités
+## Features
 
 | | |
 |---|---|
-| **Bascule automatique** | Par provider **et par modèle** : un 429 n'écarte qu'un modèle, le provider ne se met en pause que si plus aucun de ses modèles ne répond. Les refus sont classés (quota, offre non activée, plafond journalier, clé à corriger) avec la bonne durée de pause. |
-| **Quotas suivis** | Budget de jetons lu dans les en-têtes, limites apprises, aucun appel gaspillé sur un modèle qui va refuser. |
-| **Tool calling** | Décrivez une fonction Python avec `@tool`, le schéma JSON est déduit. Les erreurs d'outil sont renvoyées au modèle au lieu de planter la conversation. |
-| **Lecture par lot en parallèle** | `run_parallel` donne à chaque provider ses travailleurs, avec un plafond de simultanés et un écart entre départs adaptés à ses limites. |
-| **Recherche Web gratuite** | Exa, Tavily, LangSearch derrière une interface, quota suivi sur disque, arrêt à 90 % du plafond gratuit. Un outil prêt pour vos modèles. |
-| **JSON imparfait** | `read_json` récupère une réponse écrite deux fois ou avec un `null` parasite, sans jamais deviner une réponse coupée. |
-| **Données personnelles** | `find_personal_data` repère e-mail, téléphone, IBAN, carte, sécurité sociale (avec leurs clés de contrôle) avant l'envoi. |
-| **Tableau de bord** | Quota, latence, pauses, journal et console de test, en local, sans dépendance côté navigateur. |
-| **Configurable sans code** | `providers.json` : changez un modèle, retirez ou ajoutez un provider (tout endpoint compatible OpenAI), changez l'ordre. |
+| **Automatic failover** | Per provider **and per model**: a 429 only sets one model aside, and a provider is paused only once none of its models answers. Refusals are classified (quota, plan not enabled, daily cap, key to fix) with the right pause length. |
+| **Quota tracking** | Token budget read from response headers, learned limits, no call wasted on a model that is about to refuse. |
+| **Tool calling** | Describe a Python function with `@tool` and the JSON schema is inferred. Tool errors are sent back to the model instead of crashing the conversation. |
+| **Parallel batch reading** | `run_parallel` gives each provider its own workers, with a concurrency cap and a delay between starts matched to its limits. |
+| **Free web search** | Exa, Tavily and LangSearch behind one interface, quota tracked on disk, stop at 90% of the free allowance. A ready-made tool for your models. |
+| **Imperfect JSON** | `read_json` recovers an answer written twice or containing a stray `null`, and never guesses at a truncated one. |
+| **Personal data** | `find_personal_data` spots emails, phone numbers, IBANs, card numbers and social security numbers (with their check digits) before sending. |
+| **Dashboard** | Quota, latency, pauses, event log and test console, local, with no browser-side dependency. |
+| **No-code configuration** | `providers.json`: change a model, remove or add a provider (any OpenAI-compatible endpoint), change the order. |
 
-## Démarrage
+## Getting started
 
 ```bash
-pip install "ricochet-llm[server]"        # sans le tableau de bord : pip install ricochet-llm
+pip install "ricochet-llm[server]"        # without the dashboard: pip install ricochet-llm
 ```
 
-Ajoutez au moins une [clé gratuite](#les-providers) dans un fichier `.env` :
+Add at least one [free key](#providers) to a `.env` file:
 
 ```bash
 GROQ_API_KEY=...
-NVIDIANIM_API_KEY=...        # une clé suffit, plusieurs = plus de marge
+NVIDIANIM_API_KEY=...        # one key is enough, several give more headroom
 ```
 
 ```bash
-ricochet-llm serve --open                 # tableau de bord sur http://127.0.0.1:8765
-ricochet-llm chat "Bonjour !"             # une question, une réponse (+ le provider qui a répondu)
+ricochet-llm serve --open                 # dashboard at http://127.0.0.1:8765
+ricochet-llm chat "Hello!"                # one question, one answer (plus the provider that replied)
 ```
 
-| Commande | Effet |
+| Command | Effect |
 |---|---|
-| `ricochet-llm serve [--port N] [--open]` | serveur web et tableau de bord (commande par défaut) |
-| `ricochet-llm status` | état des providers dans le terminal |
-| `ricochet-llm chat "..."` | une question, une réponse |
-| `ricochet-llm models nvidia` | **quels modèles listés répondent vraiment** (la liste d'un provider gratuit ne le dit pas) |
-| `ricochet-llm search "..."` | recherche Web par API gratuite |
+| `ricochet-llm serve [--port N] [--open]` | web server and dashboard (default command) |
+| `ricochet-llm status` | provider status in the terminal |
+| `ricochet-llm chat "..."` | one question, one answer |
+| `ricochet-llm models nvidia` | **which listed models actually answer** (a free provider's model list doesn't tell you) |
+| `ricochet-llm search "..."` | web search through a free API |
 
-Le tableau de bord écoute uniquement sur votre machine. Il n'a pas d'authentification et ses boutons consomment des quotas : l'écoute sur une autre adresse est refusée sans `--allow-remote`.
+The dashboard only listens on your machine. It has no authentication and its buttons consume quota: listening on another address is refused unless you pass `--allow-remote`.
 
-Depuis les sources : `git clone https://github.com/Maxichance/ricochet-llm.git && cd ricochet-llm && pip install -e ".[server]"`, puis `cp .env.example .env`.
+From source: `git clone https://github.com/Maxichance/ricochet-llm.git && cd ricochet-llm && pip install -e ".[server]"`, then `cp .env.example .env`.
 
-## Dans votre code
+## In your code
 
-### Une conversation avec des outils
+### A conversation with tools
 
 ```python
 from ricochet_llm import chat_detailed, tool
 
 @tool
-def meteo(ville: str) -> dict:
-    """Donne la météo d'une ville.
+def weather(city: str) -> dict:
+    """Get the weather for a city.
 
     Args:
-        ville: Nom de la ville
+        city: Name of the city
     """
-    return {"ville": ville, "ciel": "dégagé", "temperature": 18}
+    return {"city": city, "sky": "clear", "temperature": 18}
 
-history = []                                       # une liste par conversation
-r = chat_detailed(history, "Quel temps fait-il à Nantes ?")
+history = []                                       # one list per conversation
+r = chat_detailed(history, "What's the weather in Nantes?")
 print(r.answer)
-print(r.provider, r.model, r.trail)                # qui a répondu, et les bascules éventuelles
+print(r.provider, r.model, r.trail)                # who answered, and any failovers on the way
 ```
 
-### Un appel isolé, puis un lot en parallèle
+### A single call, then a parallel batch
 
 ```python
 from ricochet_llm import generate, run_parallel
 
-def lire(document, provider):                      # exécutée dans un thread
+def read(document, provider):                      # runs in a thread
     r = generate(prompt(document), max_tokens=8192, timeout=60, prefer=provider)
-    sauvegarder(document, r.text, r.provider, r.model)     # au fil de l'eau : une interruption ne perd rien
+    save(document, r.text, r.provider, r.model)    # as you go: an interruption loses nothing
 
-bilan = run_parallel(documents, lire, limits={"nvidia": 10})
+summary = run_parallel(documents, read, limits={"nvidia": 10})
 # {"processed": 812, "errors": 3, "remaining": 0, "per_provider": {...}}
 ```
 
-`generate` ne renvoie jamais une réponse vide, accepte un délai plus long que celui du chat et bascule entre providers et entre modèles. `run_parallel` s'arrête proprement quand plus aucun provider n'est disponible et vous rend ce qui reste.
+`generate` never returns an empty answer, accepts a longer timeout than chat and fails over between providers and between models. `run_parallel` stops cleanly when no provider is left and hands back what remains.
 
-### Chercher sur le Web, lire un JSON imparfait, protéger les données
+### Search the web, read imperfect JSON, protect data
 
 ```python
 from ricochet_llm import (generate, web_search, register_search_tool,
                           read_json, find_personal_data)
 
-register_search_tool()                             # l'outil `search_web` devient appelable par vos modèles
-pages = web_search("routeur llm gratuit", n=5, content=True).results
+register_search_tool()                             # the `search_web` tool becomes callable by your models
+pages = web_search("free llm router", n=5, content=True).results
 
-data = read_json(generate(prompt, max_tokens=8192).text)    # dict, ou None si la réponse est coupée
-if find_personal_data(message):                    # e-mail, téléphone, IBAN, carte, sécurité sociale
-    ...                                            # ne l'envoyez pas à un free tier
+data = read_json(generate(prompt, max_tokens=8192).text)    # a dict, or None if the answer is truncated
+if find_personal_data(message):                    # email, phone, IBAN, card, social security number
+    ...                                            # don't send it to a free tier
 ```
 
-Le contrôle du **contenu** d'une réponse reste à vous : `read_json` ne répare que la forme.
+Checking the **content** of an answer remains up to you: `read_json` only repairs the shape.
 
-## Les providers
+## Providers
 
-| Provider | Où obtenir une clé gratuite | Variable |
+| Provider | Where to get a free key | Variable |
 |---|---|---|
 | Groq | [console.groq.com/keys](https://console.groq.com/keys) | `GROQ_API_KEY` |
-| NVIDIA NIM | [build.nvidia.com](https://build.nvidia.com) (clé d'essai) | `NVIDIANIM_API_KEY` |
+| NVIDIA NIM | [build.nvidia.com](https://build.nvidia.com) (trial key) | `NVIDIANIM_API_KEY` |
 | Ollama Cloud | [ollama.com/settings/keys](https://ollama.com/settings/keys) | `OLLAMACLOUD_API_KEY` |
-| Cloudflare Workers AI | [dash.cloudflare.com](https://dash.cloudflare.com/profile/api-tokens) (jeton **et** identifiant de compte) | `CLOUDFLARE_API_KEY`, `CLOUDFLARE_ACCOUNT_ID` |
+| Cloudflare Workers AI | [dash.cloudflare.com](https://dash.cloudflare.com/profile/api-tokens) (token **and** account ID) | `CLOUDFLARE_API_KEY`, `CLOUDFLARE_ACCOUNT_ID` |
 | OpenRouter | [openrouter.ai/keys](https://openrouter.ai/keys) | `OPENROUTER_API_KEY` |
 | Gonka | [gonkabroker.com](https://gonkabroker.com) | `GONKA_API_KEY` |
 | Gemini | [aistudio.google.com/apikey](https://aistudio.google.com/apikey) | `GEMINI_API_KEY` |
-| Mistral | [console.mistral.ai](https://console.mistral.ai/api-keys) (vérifiez que l'offre gratuite est active) | `MISTRAL_API_KEY` |
-| *Recherche Web* : Exa | [dashboard.exa.ai](https://dashboard.exa.ai) | `EXA_API_KEY` |
-| *Recherche Web* : Tavily | [app.tavily.com](https://app.tavily.com) | `TAVILY_API_KEY` |
-| *Recherche Web* : LangSearch | [langsearch.com](https://langsearch.com) | `LANGSEARCH_API_KEY` |
+| Mistral | [console.mistral.ai](https://console.mistral.ai/api-keys) (check that the free plan is active) | `MISTRAL_API_KEY` |
+| *Web search*: Exa | [dashboard.exa.ai](https://dashboard.exa.ai) | `EXA_API_KEY` |
+| *Web search*: Tavily | [app.tavily.com](https://app.tavily.com) | `TAVILY_API_KEY` |
+| *Web search*: LangSearch | [langsearch.com](https://langsearch.com) | `LANGSEARCH_API_KEY` |
 
-Un provider sans clé est simplement ignoré. `NVIDIANIM_API_KEY_EXPIRES=AAAA-MM-JJ` affiche l'échéance d'une clé d'essai dans le tableau de bord, avec une alerte à J-30.
+A provider without a key is simply ignored. `NVIDIANIM_API_KEY_EXPIRES=YYYY-MM-DD` shows a trial key's expiry date in the dashboard, with a warning 30 days before.
 
 <details>
-<summary><b>Voir le détail d'un provider dans le tableau de bord</b></summary>
+<summary><b>See a provider's details in the dashboard</b></summary>
 <br>
-<img src="docs/img/providers.png" alt="Lignes dépliées : modèles, jauges de quota, pause avec dernière erreur et bouton de reprise" width="820">
+<img src="docs/img/providers.png" alt="Expanded rows: models, quota gauges, pause with the last error and a resume button" width="820">
 </details>
 
-> **Les offres gratuites changent vite** (modèles retirés, limites modifiées). Testez un modèle par un vrai appel avant de le configurer : `ricochet-llm models <provider>`.
+> **Free tiers change fast** (models retired, limits changed). Test a model with a real call before configuring it: `ricochet-llm models <provider>`.
 >
-> **Confidentialité.** Plusieurs offres gratuites journalisent ou utilisent vos prompts pour entraîner leurs modèles. N'y envoyez pas de données personnelles ou confidentielles sans avoir vérifié leurs conditions. La licence de l'offre gratuite de NVIDIA NIM couvre la recherche, le développement et le test.
+> **Privacy.** Several free tiers log your prompts or use them to train their models. Don't send them personal or confidential data without checking their terms. NVIDIA NIM's free-tier license covers research, development and testing.
 
 ## Configuration
 
-Copiez `providers.example.json` en `providers.json` (ou pointez dessus avec `RICOCHET_PROVIDERS`) pour modifier un modèle, retirer un provider, en ajouter un ou changer l'ordre :
+Copy `providers.example.json` to `providers.json` (or point to it with `RICOCHET_PROVIDERS`) to change a model, remove a provider, add one or change the order:
 
 ```json
 {
   "providers": [
     { "name": "groq", "model_heavy": "openai/gpt-oss-120b" },
     { "name": "cerebras", "enabled": false },
-    { "name": "monprovider", "env_key": "MONPROVIDER_API_KEY",
-      "base_url": "https://api.exemple.com/v1", "model_heavy": "gros-modele" }
+    { "name": "myprovider", "env_key": "MYPROVIDER_API_KEY",
+      "base_url": "https://api.example.com/v1", "model_heavy": "big-model" }
   ],
-  "order": ["monprovider"]
+  "order": ["myprovider"]
 }
 ```
 
-Le fichier est validé : une faute de frappe donne une erreur explicite. Sans fichier, `RICOCHET_ORDER=groq,gemini` change la tête de liste. Tous les champs (modèles de repli, options par modèle, limites de jetons, plafond de simultanés...) sont documentés en tête de [`ricochet_llm/catalog.py`](https://github.com/Maxichance/ricochet-llm/blob/main/ricochet_llm/catalog.py).
+The file is validated: a typo gives an explicit error. Without a file, `RICOCHET_ORDER=groq,gemini` changes the head of the list. All fields (fallback models, per-model options, token limits, concurrency cap...) are documented at the top of [`ricochet_llm/catalog.py`](https://github.com/Maxichance/ricochet-llm/blob/main/ricochet_llm/catalog.py).
 
-Vos outils et votre prompt système peuvent vivre dans un plugin, chargé par le serveur et la ligne de commande : `RICOCHET_PLUGIN=examples/demo_tools.py`. Le plugin est du code exécuté tel quel : ne chargez que du code de confiance.
+Your tools and your system prompt can live in a plugin, loaded by the server and the command line: `RICOCHET_PLUGIN=examples/demo_tools.py`. A plugin is code run as is: only load code you trust.
 
 ## Documentation
 
-- [Guide technique](https://github.com/Maxichance/ricochet-llm/blob/main/docs/GUIDE.md) : le routage en détail, comment chaque erreur est traitée, comportements des providers, bonnes pratiques de la lecture par lot.
-- [Recherche Web](https://github.com/Maxichance/ricochet-llm/blob/main/docs/RECHERCHE_WEB.md) : providers retenus et écartés, quotas, ajouter un moteur.
-- [Exemples](https://github.com/Maxichance/ricochet-llm/tree/main/examples) : un plugin d'outils, un usage en bibliothèque.
-- [Journal des versions](https://github.com/Maxichance/ricochet-llm/blob/main/CHANGELOG.md).
-- [Contribuer](https://github.com/Maxichance/ricochet-llm/blob/main/CONTRIBUTING.md) : proposer des providers, des modèles ou toute évolution.
+- [Technical guide](https://github.com/Maxichance/ricochet-llm/blob/main/docs/GUIDE.md): routing in detail, how each error is handled, provider behaviors, best practices for batch reading.
+- [Web search](https://github.com/Maxichance/ricochet-llm/blob/main/docs/WEB_SEARCH.md): providers kept and set aside, quotas, adding an engine.
+- [Examples](https://github.com/Maxichance/ricochet-llm/tree/main/examples): a tool plugin, a library usage.
+- [Changelog](https://github.com/Maxichance/ricochet-llm/blob/main/CHANGELOG.md).
+- [Contributing](https://github.com/Maxichance/ricochet-llm/blob/main/CONTRIBUTING.md): propose providers, models or any other change.
 
-## Développement
+## Development
 
 ```bash
 pip install -e ".[dev]" ruff
 ruff check .
-python -m unittest discover -s tests -v          # aucun réseau, aucun quota consommé
+python -m unittest discover -s tests -v          # no network, no quota consumed
 ```
 
-Les tests utilisent de faux providers : ils ne consomment rien.
+The tests use fake providers: they consume nothing.
 
-## Avertissements
+## Disclaimers
 
-- **Aucune affiliation.** Ricochet est un projet indépendant. Il n'est ni affilié à, ni approuvé ou sponsorisé par Groq, NVIDIA, Ollama, Cloudflare, OpenRouter, Gonka, Google, Mistral, Cerebras, Exa, Tavily, LangSearch ou tout autre fournisseur cité. Leurs noms et marques appartiennent à leurs propriétaires et ne servent qu'à indiquer la compatibilité.
-- **Conditions des fournisseurs.** Vous êtes seul responsable du respect des conditions d'utilisation et des licences des fournisseurs dont vous utilisez les clés (l'offre d'essai de NVIDIA NIM, par exemple, est limitée à la recherche, au développement et au test). Ricochet utilise une clé par fournisseur et n'est pas conçu pour contourner leurs limites : ne l'utilisez pas pour multiplier les comptes ou les clés, ni pour revendre ou partager un accès.
-- **Les offres changent.** Modèles, quotas, tarifs et conditions des offres gratuites évoluent sans préavis. Les informations de ce dépôt peuvent être périmées, et aucune disponibilité n'est garantie.
-- **Vos données.** Ce que vous envoyez part chez des tiers, parfois hors de l'Union européenne, parfois journalisé ou réutilisé. Vous restez responsable des données que vous transmettez, y compris au regard du RGPD. Le filtre `find_personal_data` est une aide limitée, pas une garantie.
-- **Contenus générés et résultats de recherche.** Les réponses d'un modèle peuvent être inexactes. Les pages renvoyées par la recherche Web appartiennent à leurs auteurs : vous répondez de leur usage.
-- **Aucune garantie.** Le logiciel est fourni « tel quel », sans garantie d'aucune sorte, et son auteur n'est responsable d'aucun dommage lié à son utilisation, dans la limite permise par la loi (voir la licence MIT). Ce dépôt ne constitue pas un conseil juridique.
+- **No affiliation.** Ricochet is an independent project. It is not affiliated with, endorsed or sponsored by Groq, NVIDIA, Ollama, Cloudflare, OpenRouter, Gonka, Google, Mistral, Cerebras, Exa, Tavily, LangSearch or any other provider mentioned. Their names and trademarks belong to their owners and are used only to indicate compatibility.
+- **Provider terms.** You alone are responsible for complying with the terms of use and licenses of the providers whose keys you use (NVIDIA NIM's trial plan, for example, is limited to research, development and testing). Ricochet uses one key per provider and is not designed to get around their limits: don't use it to multiply accounts or keys, or to resell or share access.
+- **Offers change.** Models, quotas, prices and terms of free tiers change without notice. The information in this repository may be out of date, and no availability is guaranteed.
+- **Your data.** What you send goes to third parties, sometimes outside the European Union, sometimes logged or reused. You remain responsible for the data you transmit, including under the GDPR. The `find_personal_data` filter is a limited aid, not a guarantee.
+- **Generated content and search results.** A model's answers may be inaccurate. Pages returned by web search belong to their authors: you are responsible for how you use them.
+- **No warranty.** The software is provided "as is", without warranty of any kind, and its author is not liable for any damage arising from its use, to the extent permitted by law (see the MIT license). This repository is not legal advice.
 
-## Sécurité et licence
+## Security and license
 
-Un signalement de faille se fait en privé : voir [SECURITY.md](https://github.com/Maxichance/ricochet-llm/blob/main/SECURITY.md). Code sous licence [MIT](https://github.com/Maxichance/ricochet-llm/blob/main/LICENSE).
+Report a vulnerability privately: see [SECURITY.md](https://github.com/Maxichance/ricochet-llm/blob/main/SECURITY.md). Code released under the [MIT](https://github.com/Maxichance/ricochet-llm/blob/main/LICENSE) license.

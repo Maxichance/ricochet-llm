@@ -1,31 +1,31 @@
 """
-Repère les données personnelles ÉVIDENTES dans ce qu'un utilisateur saisit, avant de l'envoyer à un provider.
+Spots OBVIOUS personal data in what a user types, before it is sent to a provider.
 
-Les providers gratuits sont hors de l'Europe pour la plupart, et plusieurs peuvent journaliser ou réutiliser les échanges
-(voir la colonne « note » du catalogue). Demander aux utilisateurs de ne rien saisir de personnel ne les en empêche pas :
-ce module est le filet. Adresse e-mail, téléphone (France), IBAN, carte bancaire, numéro de sécurité sociale.
+Most free providers are outside Europe, and several may log or reuse the exchanges (see the "note" field of the
+catalog). Asking users not to type anything personal does not stop them: this module is the safety net. Email address,
+phone number (France), IBAN, bank card, social security number (France).
 
     from ricochet_llm import find_personal_data, chat_detailed
 
     found = find_personal_data(message)
     if found:
-        return f"Cette question semble contenir une donnée personnelle ({', '.join(found)}). Reformulez-la."
+        return f"This question seems to contain personal data ({', '.join(found)}). Please rephrase it."
     chat_detailed(history, message)
 
-Chaque motif est validé par sa clé de contrôle (Luhn pour la carte, modulo 97 pour l'IBAN et la sécurité sociale) pour ne
-pas bloquer un code-barres, une référence produit ou un numéro de commande. Limite assumée : un nom, une situation
-confidentielle ou un contexte personnel écrits en texte libre ne se repèrent pas. Fonctions pures, aucun appel réseau.
+Each pattern is validated by its check key (Luhn for the card, modulo 97 for the IBAN and the social security number) so
+as not to block a barcode, a product reference or an order number. Accepted limit: a name, a confidential situation or
+a personal context written in free text is not detected. Pure functions, no network calls.
 """
 import re
 from typing import List, Optional
 
-EMAIL = "adresse e-mail"
-PHONE = "numéro de téléphone"
+EMAIL = "email address"
+PHONE = "phone number"
 IBAN = "IBAN"
-CARD = "numéro de carte bancaire"
-SOCIAL_SECURITY = "numéro de sécurité sociale"
+CARD = "bank card number"
+SOCIAL_SECURITY = "social security number"
 
-# Les classes « [ <nbsp><espace fine insécable>-] » acceptent les séparateurs que le français met dans les nombres.
+# The classes "[ <nbsp><narrow no-break space>-]" accept the separators French puts in numbers.
 _RE_EMAIL = re.compile(r"[\w.+%\-]+@[\w\-]+(?:\.[\w\-]+)*\.[A-Za-z]{2,}", re.UNICODE)
 _RE_PHONE = re.compile(r"(?<![\w+])(?:0[1-9]|(?:\+33|0033)[ . -]?[1-9])(?:[ . -]?\d{2}){4}(?!\w)")
 _RE_IBAN = re.compile(r"\b[A-Za-z]{2}\d{2}(?:[ \xa0 -]?[A-Za-z0-9]){11,30}\b")
@@ -58,13 +58,13 @@ def _valid_iban(text: str) -> bool:
 def _valid_social_security_key(text: str) -> bool:
     compact = re.sub(r"[ \xa0 .]", "", text).upper()
     if len(compact) != 15:
-        return False    # 13 chiffres sans clé : indiscernable d'un code-barres EAN, on ne bloque pas
+        return False    # 13 digits without a key: indistinguishable from an EAN barcode, we do not block
     base, key = compact[:13].replace("2A", "19").replace("2B", "18"), compact[13:]
     return base.isdigit() and key.isdigit() and (97 - int(base) % 97) == int(key)
 
 
 def find_personal_data(text: Optional[str]) -> List[str]:
-    """Types de données personnelles évidentes, dans un ordre fixe ; liste vide si rien."""
+    """Types of obvious personal data, in a fixed order; empty list if none."""
     if not text:
         return []
     found: List[str] = []
@@ -85,9 +85,9 @@ def find_personal_data(text: Optional[str]) -> List[str]:
 
 
 def check_conversation(message: str, history: Optional[List[dict]] = None, turns: int = 6) -> List[str]:
-    """Types trouvés dans le message OU dans les `turns` derniers messages de l'utilisateur de l'historique rejoué
-    (la réponse du modèle ne compte pas : un historique envoyé à chaque tour ferait repartir la donnée). Liste vide si
-    rien : le message peut partir."""
+    """Types found in the message OR in the last `turns` user messages of the replayed history
+    (the model's reply does not count: a history sent on every turn would send the data out again). Empty list if
+    none: the message may go out."""
     found = find_personal_data(message)
     if found:
         return found

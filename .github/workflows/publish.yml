@@ -7,7 +7,7 @@ jobs:
     runs-on: ubuntu-latest
     environment: pypi
     permissions:
-      id-token: write          # publication de confiance : aucun jeton PyPI à stocker
+      id-token: write          # trusted publishing: no PyPI token to store
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-python@v6

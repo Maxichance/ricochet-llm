@@ -1,4 +1,4 @@
-"""Registre d'outils et chargement de plugins."""
+"""Tool registry and plugin loading."""
 import json
 import os
 import sys
@@ -22,23 +22,23 @@ class SchemaTests(unittest.TestCase):
         return self.reg.schemas()[0]["function"]
 
     def test_schema_is_inferred_from_signature_and_docstring(self):
-        def chercher(email: str, limite: int = 5, actif: bool = True, tags: Optional[List[str]] = None):
-            """Cherche un client.
+        def search(email: str, limit: int = 5, active: bool = True, tags: Optional[List[str]] = None):
+            """Looks up a customer.
 
             Args:
-                email: Email du client
-                limite (int): Nombre max de résultats,
-                    sur plusieurs lignes
+                email: Customer email
+                limit (int): Max number of results,
+                    over several lines
             """
-        fn = self.schema_of(chercher)
-        self.assertEqual(fn["name"], "chercher")
-        self.assertEqual(fn["description"], "Cherche un client.")
+        fn = self.schema_of(search)
+        self.assertEqual(fn["name"], "search")
+        self.assertEqual(fn["description"], "Looks up a customer.")
         params = fn["parameters"]
         self.assertEqual(params["required"], ["email"])
-        self.assertEqual(params["properties"]["email"], {"type": "string", "description": "Email du client"})
-        self.assertEqual(params["properties"]["limite"]["type"], "integer")
-        self.assertIn("sur plusieurs lignes", params["properties"]["limite"]["description"])
-        self.assertEqual(params["properties"]["actif"]["type"], "boolean")
+        self.assertEqual(params["properties"]["email"], {"type": "string", "description": "Customer email"})
+        self.assertEqual(params["properties"]["limit"]["type"], "integer")
+        self.assertIn("over several lines", params["properties"]["limit"]["description"])
+        self.assertEqual(params["properties"]["active"]["type"], "boolean")
         self.assertEqual(params["properties"]["tags"], {"type": "array", "items": {"type": "string"}})
 
     def test_literal_becomes_enum_and_varargs_are_ignored(self):
@@ -72,20 +72,20 @@ class RegistrationTests(unittest.TestCase):
         self.assertIn("f", self.reg)
 
     def test_decorator_with_arguments(self):
-        @self.reg.register(name="autre", description="Une description.")
+        @self.reg.register(name="other", description="A description.")
         def f():
             return 1
-        self.assertEqual(self.reg.names(), ["autre"])
+        self.assertEqual(self.reg.names(), ["other"])
 
     def test_invalid_name_duplicate_and_missing_description_are_rejected(self):
         with self.assertRaises(ValueError):
-            self.reg.register(lambda: 1, name="nom invalide!", description="d")
+            self.reg.register(lambda: 1, name="invalid name!", description="d")
         self.reg.register(lambda: 1, name="ok", description="d")
         with self.assertRaises(ValueError):
             self.reg.register(lambda: 1, name="ok", description="d")
         self.reg.register(lambda: 2, name="ok", description="d", replace=True)
         with self.assertRaises(ValueError):
-            self.reg.register(lambda: 1, name="sans_doc")
+            self.reg.register(lambda: 1, name="no_doc")
 
 
 class ExecuteTests(unittest.TestCase):
@@ -93,27 +93,27 @@ class ExecuteTests(unittest.TestCase):
         self.reg = ToolRegistry()
 
         @self.reg.register
-        def additionner(a: int, b: int = 0):
-            """Additionne."""
-            return {"somme": a + b}
+        def add(a: int, b: int = 0):
+            """Adds."""
+            return {"sum": a + b}
 
         @self.reg.register
-        def casse():
-            """Plante."""
-            raise RuntimeError("boum")
+        def broken():
+            """Crashes."""
+            raise RuntimeError("boom")
 
     def test_success_returns_json_string(self):
-        self.assertEqual(json.loads(self.reg.execute("additionner", '{"a": 2, "b": 3}')), {"somme": 5})
+        self.assertEqual(json.loads(self.reg.execute("add", '{"a": 2, "b": 3}')), {"sum": 5})
 
     def test_empty_arguments_are_an_empty_object(self):
-        self.assertIn("TypeError", self.reg.execute("additionner", ""))      # a manquant : erreur renvoyée, pas levée
+        self.assertIn("TypeError", self.reg.execute("add", ""))      # a is missing: error returned, not raised
 
     def test_errors_are_returned_to_the_model_not_raised(self):
-        self.assertIn("Outil inconnu", self.reg.execute("nope", "{}"))
-        self.assertIn("TypeError", self.reg.execute("additionner", '{"zzz": 1}'))
-        self.assertIn("RuntimeError: boum", self.reg.execute("casse", "{}"))
-        self.assertIn("error", self.reg.execute("additionner", "{pas du json"))
-        self.assertIn("error", self.reg.execute("additionner", "[1, 2]"))
+        self.assertIn("Unknown tool", self.reg.execute("nope", "{}"))
+        self.assertIn("TypeError", self.reg.execute("add", '{"zzz": 1}'))
+        self.assertIn("RuntimeError: boom", self.reg.execute("broken", "{}"))
+        self.assertIn("error", self.reg.execute("add", "{not json"))
+        self.assertIn("error", self.reg.execute("add", "[1, 2]"))
 
     def test_non_json_results_are_stringified(self):
         self.reg.register(lambda: {1, 2}.__class__, name="t", description="d")
@@ -142,13 +142,13 @@ class PluginTests(unittest.TestCase):
 
     def test_python_file_is_executed_once(self):
         marker = Path(self.dir.name) / "count.txt"
-        path = self.write("mon_plugin.py", f"""
+        path = self.write("my_plugin.py", f"""
             from pathlib import Path
             p = Path({str(marker)!r})
             p.write_text(p.read_text() + "x" if p.exists() else "x")
         """)
         self.assertEqual(plugins.load_plugin(path), path)
-        self.assertIsNone(plugins.load_plugin(path))                  # déjà chargé
+        self.assertIsNone(plugins.load_plugin(path))                  # already loaded
         self.assertEqual(marker.read_text(), "x")
 
     def test_env_var_is_used(self):
@@ -169,12 +169,12 @@ class PluginTests(unittest.TestCase):
     def test_missing_file_and_broken_plugin_raise_plugin_error(self):
         with self.assertRaises(plugins.PluginError):
             plugins.load_plugin(str(Path(self.dir.name) / "absent.py"))
-        broken = self.write("casse.py", "raise ValueError('oups')\n")
+        broken = self.write("broken.py", "raise ValueError('oops')\n")
         with self.assertRaises(plugins.PluginError) as ctx:
             plugins.load_plugin(broken)
-        self.assertIn("oups", str(ctx.exception))
+        self.assertIn("oops", str(ctx.exception))
         with self.assertRaises(plugins.PluginError):
-            plugins.load_plugin("module_qui_nexiste_pas_xyz")
+            plugins.load_plugin("module_that_does_not_exist_xyz")
 
 
 if __name__ == "__main__":

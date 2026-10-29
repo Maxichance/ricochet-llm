@@ -1,6 +1,6 @@
 """
-Recherche Web par API gratuite. Aucun appel réseau : les trois API sont simulées avec les schémas de leur documentation
-officielle. Réponses SYNTHÉTIQUES.
+Web search through free APIs. No network call: the three APIs are simulated with the schemas of their official
+documentation. SYNTHETIC responses.
 """
 import json
 import os
@@ -18,18 +18,18 @@ from ricochet_llm import search as sr  # noqa: E402
 from ricochet_llm.tools import registry  # noqa: E402
 
 EXA = {"requestId": "r", "results": [
-    {"title": "Guide des routeurs", "url": "https://exemple.org/guide",
-     "highlights": ["Le routeur bascule seul.", "Le quota est suivi."], "publishedDate": "2026-10-01"},
-    {"title": "Doublon", "url": "https://exemple.org/guide", "highlights": []},
-    {"title": "Sans adresse valide", "url": "javascript:alert(1)"}], "costDollars": {"total": 0.007}}
+    {"title": "Router guide", "url": "https://example.org/guide",
+     "highlights": ["The router fails over by itself.", "The quota is tracked."], "publishedDate": "2026-10-01"},
+    {"title": "Duplicate", "url": "https://example.org/guide", "highlights": []},
+    {"title": "No valid address", "url": "javascript:alert(1)"}], "costDollars": {"total": 0.007}}
 TAVILY = {"query": "q", "results": [
-    {"title": "Guide", "url": "https://exemple.net/g", "content": "Extrait Tavily", "score": 0.9,
-     "raw_content": "Texte integral " * 5},
-    {"title": "Autre", "url": "https://exemple.net/a", "content": "Autre extrait", "score": 0.5}],
+    {"title": "Guide", "url": "https://example.net/g", "content": "Tavily excerpt", "score": 0.9,
+     "raw_content": "Full text " * 5},
+    {"title": "Other", "url": "https://example.net/a", "content": "Other excerpt", "score": 0.5}],
     "usage": {"credits": 1}, "request_id": "x"}
 LANGSEARCH = {"code": 200, "log_id": "l", "msg": None, "data": {"_type": "SearchResponse", "webPages": {"value": [
-    {"id": "1", "name": "Page LS", "url": "https://exemple.com/p", "displayUrl": "x", "snippet": "Resume LS",
-     "datePublished": None, "text": "Texte LS"}]}}, "usage": {"input_tokens": 12, "output_tokens": 30}}
+    {"id": "1", "name": "LS page", "url": "https://example.com/p", "displayUrl": "x", "snippet": "LS summary",
+     "datePublished": None, "text": "LS text"}]}}, "usage": {"input_tokens": 12, "output_tokens": 30}}
 
 HOSTS = {"api.exa.ai": "exa", "api.tavily.com": "tavily", "api.langsearch.com": "langsearch"}
 ENV_VARS = ("EXA_API_KEY", "TAVILY_API_KEY", "LANGSEARCH_API_KEY", sr.ORDER_ENV_VAR, sr.STATE_ENV_VAR,
@@ -50,10 +50,10 @@ class SearchTestCase(unittest.TestCase):
 
     def key(self, *names):
         for name in names:
-            os.environ[sr.PROVIDERS[name]["env_key"]] = f"cle-{name}"
+            os.environ[sr.PROVIDERS[name]["env_key"]] = f"key-{name}"
 
     def run_search(self, routes, calls=None, **kw):
-        """`routes` : nom du provider -> (statut, corps[, en-têtes])."""
+        """`routes`: provider name -> (status, body[, headers])."""
         def handler(req):
             name = HOSTS[req.url.host]
             if calls is not None:
@@ -61,7 +61,7 @@ class SearchTestCase(unittest.TestCase):
             status, body, *headers = routes[name]
             return httpx.Response(status, json=body, headers=headers[0] if headers else {})
         with httpx.Client(transport=httpx.MockTransport(handler)) as client:
-            return sr.search("routeur gratuit", client=client, **kw)
+            return sr.search("free router", client=client, **kw)
 
 
 class AdapterTests(SearchTestCase):
@@ -70,24 +70,24 @@ class AdapterTests(SearchTestCase):
         calls = []
         r = self.run_search({"exa": (200, EXA)}, calls, n=5, content=True)
         _, headers, body = calls[0]
-        self.assertEqual(headers["x-api-key"], "cle-exa")
-        self.assertEqual(body, {"query": "routeur gratuit", "numResults": 5, "type": "auto",
+        self.assertEqual(headers["x-api-key"], "key-exa")
+        self.assertEqual(body, {"query": "free router", "numResults": 5, "type": "auto",
                                 "contents": {"highlights": True}})
         self.assertEqual((r.status, r.engine, r.cost), (sr.SUCCESS, "exa", 0.007))
-        self.assertEqual([p["url"] for p in r.results], ["https://exemple.org/guide"])     # doublon et adresse invalide écartés
-        self.assertEqual(r.results[0]["content"], "Le routeur bascule seul. ... Le quota est suivi.")
+        self.assertEqual([p["url"] for p in r.results], ["https://example.org/guide"])     # duplicate and invalid address dropped
+        self.assertEqual(r.results[0]["content"], "The router fails over by itself. ... The quota is tracked.")
 
     def test_tavily_request_and_reading(self):
         self.key("tavily")
         calls = []
         r = self.run_search({"tavily": (200, TAVILY)}, calls, content=True)
         _, headers, body = calls[0]
-        self.assertEqual(headers["authorization"], "Bearer cle-tavily")
+        self.assertEqual(headers["authorization"], "Bearer key-tavily")
         self.assertEqual((body["search_depth"], body["include_raw_content"], body["include_usage"]), ("basic", "text", True))
-        self.assertNotIn("country", body)                       # le pays n'est envoyé que s'il est demandé
-        self.assertEqual((r.engine, r.cost, r.results[0]["snippet"]), ("tavily", 1.0, "Extrait Tavily"))
-        self.assertTrue(r.results[0]["content"].startswith("Texte integral"))
-        self.assertNotIn("content", r.results[1])               # Tavily ne rend le texte que pour une partie des résultats
+        self.assertNotIn("country", body)                       # the country is sent only when requested
+        self.assertEqual((r.engine, r.cost, r.results[0]["snippet"]), ("tavily", 1.0, "Tavily excerpt"))
+        self.assertTrue(r.results[0]["content"].startswith("Full text"))
+        self.assertNotIn("content", r.results[1])               # Tavily returns the text for only some of the results
 
     def test_tavily_country_is_configurable(self):
         self.key("tavily")
@@ -101,19 +101,19 @@ class AdapterTests(SearchTestCase):
         calls = []
         r = self.run_search({"langsearch": (200, LANGSEARCH)}, calls, content=True)
         _, headers, body = calls[0]
-        self.assertEqual(headers["authorization"], "Bearer cle-langsearch")
+        self.assertEqual(headers["authorization"], "Bearer key-langsearch")
         self.assertEqual((body["contents"], body["count"]), ({"text": {"maxCharacters": sr.CONTENT_MAX}}, 6))
         self.assertEqual((r.engine, r.cost, r.results[0]["title"], r.results[0]["content"]),
-                         ("langsearch", 42.0, "Page LS", "Texte LS"))
+                         ("langsearch", 42.0, "LS page", "LS text"))
 
     def test_langsearch_sends_no_summary_when_the_text_is_requested(self):
-        """Avec `contents.text`, l'API n'envoie plus de `snippet` ; l'extrait vient du texte."""
+        """With `contents.text`, the API no longer sends a `snippet`; the excerpt comes from the text."""
         self.key("langsearch")
         real = {"code": 200, "log_id": "l", "msg": None, "data": {"webPages": {"value": [
-            {"id": "1", "name": "Page", "url": "https://exemple.org/p", "displayUrl": "x", "datePublished": None,
-             "text": "Texte integral de la page. " * 30}]}}, "usage": {"input_tokens": 9, "output_tokens": 961}}
+            {"id": "1", "name": "Page", "url": "https://example.org/p", "displayUrl": "x", "datePublished": None,
+             "text": "Full text of the page. " * 30}]}}, "usage": {"input_tokens": 9, "output_tokens": 961}}
         r = self.run_search({"langsearch": (200, real)}, content=True)
-        self.assertTrue(r.results[0]["snippet"].startswith("Texte integral de la page."))
+        self.assertTrue(r.results[0]["snippet"].startswith("Full text of the page."))
         self.assertEqual((len(r.results[0]["snippet"]), r.cost), (sr.SNIPPET_MAX, 970.0))
 
     def test_without_content_nothing_more_is_requested(self):
@@ -143,11 +143,11 @@ class FailoverTests(SearchTestCase):
     def test_exhausted_quota_402_is_remembered_on_disk_until_renewal(self):
         self.key("exa", "tavily")
         self.run_search({"exa": (402, {}), "tavily": (200, TAVILY)})
-        self.assertGreaterEqual(sr.used("exa"), sr.PROVIDERS["exa"]["quota"])              # poussé au plafond
-        sr._cooldown.clear()                                                                # nouveau processus : plus de pause en mémoire
+        self.assertGreaterEqual(sr.used("exa"), sr.PROVIDERS["exa"]["quota"])              # pushed to the ceiling
+        sr._cooldown.clear()                                                                # new process: no more in-memory pause
         calls = []
         self.run_search({"exa": (200, EXA), "tavily": (200, TAVILY)}, calls)
-        self.assertEqual([c[0] for c in calls], ["tavily"])                                 # Exa reste écarté grâce au compteur
+        self.assertEqual([c[0] for c in calls], ["tavily"])                                 # Exa stays benched thanks to the counter
 
     def test_tavily_432_is_an_exhausted_quota(self):
         self.key("tavily")
@@ -158,11 +158,11 @@ class FailoverTests(SearchTestCase):
     def test_it_stops_before_the_providers_own_ceiling(self):
         self.key("tavily")
         for _ in range(3):
-            sr._count("tavily", 300.0)                          # 900 crédits : 90 % du quota gratuit
+            sr._count("tavily", 300.0)                          # 900 credits: 90% of the free quota
         self.assertNotIn("tavily", sr.available())
         r = self.run_search({"tavily": (200, TAVILY)})
         self.assertEqual(r.status, sr.ERROR)
-        self.assertIn("aucun moteur", r.error)
+        self.assertIn("no search engine", r.error)
 
     def test_the_counter_adds_the_real_cost_and_forgets_past_periods(self):
         self.key("tavily")
@@ -171,7 +171,7 @@ class FailoverTests(SearchTestCase):
         self.assertEqual(sr.used("tavily"), 2.0)
         state = json.loads(sr.state_file().read_text(encoding="utf-8"))
         self.assertEqual(list(state["tavily"]), [sr._period_key(sr.PROVIDERS["tavily"])])
-        state["tavily"] = {"2020-01": 999.0}                    # un ancien mois n'est plus compté
+        state["tavily"] = {"2020-01": 999.0}                    # an old month is no longer counted
         sr.state_file().write_text(json.dumps(state), encoding="utf-8")
         self.assertEqual(sr.used("tavily"), 0.0)
 
@@ -188,17 +188,17 @@ class FailoverTests(SearchTestCase):
         self.assertEqual(r.engine, "tavily")
 
     def test_order_is_configurable_and_unknown_names_are_ignored(self):
-        os.environ[sr.ORDER_ENV_VAR] = "tavily, inconnu ,exa"
+        os.environ[sr.ORDER_ENV_VAR] = "tavily, unknown ,exa"
         self.assertEqual(sr._order(), ["tavily", "exa"])
-        os.environ[sr.ORDER_ENV_VAR] = "n'importe quoi"
+        os.environ[sr.ORDER_ENV_VAR] = "whatever"
         self.assertEqual(sr._order(), list(sr.DEFAULT_ORDER))
 
     def test_fallback_is_called_when_no_api_is_usable(self):
         def ddg(query, n):
-            return sr.SearchResult(sr.SUCCESS, query, [{"title": "t", "url": "https://x.fr", "snippet": ""}], engine="secours")
-        self.assertEqual(self.run_search({}, fallback=ddg).engine, "secours")                 # aucune clé configurée
+            return sr.SearchResult(sr.SUCCESS, query, [{"title": "t", "url": "https://x.fr", "snippet": ""}], engine="backup")
+        self.assertEqual(self.run_search({}, fallback=ddg).engine, "backup")                  # no key configured
         self.key("exa")
-        self.assertEqual(self.run_search({"exa": (429, {})}, fallback=ddg).engine, "secours")  # une API qui refuse
+        self.assertEqual(self.run_search({"exa": (429, {})}, fallback=ddg).engine, "backup")  # an API that refuses
 
     def test_without_fallback_the_last_refusal_is_returned(self):
         self.key("exa")
@@ -208,18 +208,18 @@ class FailoverTests(SearchTestCase):
     def test_an_empty_answer_and_an_unreadable_one(self):
         self.key("tavily")
         self.assertEqual(self.run_search({"tavily": (200, {"results": []})}).status, sr.EMPTY)
-        with httpx.Client(transport=httpx.MockTransport(lambda req: httpx.Response(200, text="pas du json"))) as client:
+        with httpx.Client(transport=httpx.MockTransport(lambda req: httpx.Response(200, text="not json"))) as client:
             self.assertEqual(sr.search("q", client=client).status, sr.ERROR)
 
     def test_a_network_error_is_a_refusal_not_an_exception(self):
         self.key("exa")
 
         def boom(req):
-            raise httpx.ConnectError("injoignable")
+            raise httpx.ConnectError("unreachable")
         with httpx.Client(transport=httpx.MockTransport(boom)) as client:
             r = sr.search("q", client=client)
         self.assertEqual(r.status, sr.ERROR)
-        self.assertNotIn("injoignable", json.dumps(sr.search_web("q")))
+        self.assertNotIn("unreachable", json.dumps(sr.search_web("q")))
 
     def test_an_empty_query_calls_nothing(self):
         self.key("exa")
@@ -228,9 +228,9 @@ class FailoverTests(SearchTestCase):
 
 class StatusAndToolTests(SearchTestCase):
     def test_status_needs_no_network_and_never_shows_a_key(self):
-        os.environ["EXA_API_KEY"] = "secret-a-ne-jamais-montrer"
+        os.environ["EXA_API_KEY"] = "secret-never-to-be-shown"
         status = sr.status()
-        self.assertNotIn("secret-a-ne-jamais-montrer", json.dumps(status))
+        self.assertNotIn("secret-never-to-be-shown", json.dumps(status))
         exa = next(p for p in status["providers"] if p["name"] == "exa")
         self.assertTrue(exa["configured"] and exa["available"])
         self.assertEqual(exa["quota"], 10.0)
@@ -238,10 +238,10 @@ class StatusAndToolTests(SearchTestCase):
 
     def test_the_tool_hides_every_technical_detail_from_the_model(self):
         def blocked(query, n):
-            return sr.SearchResult(sr.BLOCKED, query, error="défi anti-robot du moteur")
+            return sr.SearchResult(sr.BLOCKED, query, error="engine anti-bot challenge")
         with mock.patch.object(sr, "search", side_effect=lambda q, **kw: blocked(q, 1)):
-            out = sr.search_web("routeur")
-        self.assertEqual(out, {"error": "recherche indisponible", "status": sr.BLOCKED})
+            out = sr.search_web("router")
+        self.assertEqual(out, {"error": "search unavailable", "status": sr.BLOCKED})
 
     def test_the_tool_returns_pages(self):
         pages = [{"title": "t", "url": "https://x.fr", "snippet": "s"}]

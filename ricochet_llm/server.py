@@ -1,7 +1,7 @@
 """
-Serveur web local : tableau de bord (statut + quota de chaque provider), console de chat et API JSON.
-Lancer :  python -m ricochet_llm serve        puis ouvrir http://127.0.0.1:8765
-Écoute en local uniquement par défaut : les actions (chat, test, reprise) consomment des quotas.
+Local web server: dashboard (status + quota of each provider), chat console and JSON API.
+Run:  python -m ricochet_llm serve        then open http://127.0.0.1:8765
+Listens on localhost only by default: the actions (chat, test, resume) consume quota.
 """
 import logging
 import threading
@@ -35,10 +35,10 @@ class ResetRequest(BaseModel):
 
 
 def create_app() -> FastAPI:
-    load_plugin()                                   # $RICOCHET_PLUGIN : vos outils et votre prompt système
+    load_plugin()                                   # $RICOCHET_PLUGIN: your tools and your system prompt
     app = FastAPI(title="Ricochet", docs_url="/api/docs", redoc_url=None,
                   openapi_url="/api/openapi.json")
-    sessions: Dict[str, list] = {}                  # session_id -> historique (en mémoire, mono-instance)
+    sessions: Dict[str, list] = {}                  # session_id -> history (in memory, single instance)
     session_locks: Dict[str, threading.Lock] = {}
     registry_lock = threading.Lock()
     started = time.time()
@@ -64,7 +64,7 @@ def create_app() -> FastAPI:
 
     @app.get("/api/status")
     async def status():
-        await run_in_threadpool(router.refresh_probes)      # sondes de quota (réseau) hors de la boucle d'événements
+        await run_in_threadpool(router.refresh_probes)      # quota probes (network) kept off the event loop
         providers = router.quota_status()
         return JSONResponse({
             "providers":   providers,
@@ -77,14 +77,14 @@ def create_app() -> FastAPI:
 
     @app.get("/api/search/status")
     async def search_status():
-        """Moteurs de recherche Web : clés présentes, consommation du mois ou du jour, pauses. Aucun appel réseau."""
+        """Web search engines: keys present, usage for the month or day, pauses. No network call."""
         return JSONResponse(search.status(), headers=NO_STORE)
 
     @app.post("/api/chat")
     async def api_chat(req: ChatRequest):
         history, lock = get_session(req.session_id)
-        if not lock.acquire(blocking=False):            # l'historique d'une session n'est pas thread-safe
-            return JSONResponse({"status": "error", "response": "Une requête est déjà en cours pour cette session."},
+        if not lock.acquire(blocking=False):            # a session's history is not thread-safe
+            return JSONResponse({"status": "error", "response": "A request is already in progress for this session."},
                                 status_code=409)
         try:
             result = await run_in_threadpool(router.chat_detailed, history, req.message)
@@ -92,8 +92,8 @@ def create_app() -> FastAPI:
         except router.LLMRouterError as e:
             return JSONResponse({"status": "error", "response": str(e)}, status_code=503)
         except Exception as e:
-            logger.exception("Erreur pendant le chat")
-            return JSONResponse({"status": "error", "response": f"Erreur LLM : {str(e)[:300]}"}, status_code=500)
+            logger.exception("Error during chat")
+            return JSONResponse({"status": "error", "response": f"LLM error: {str(e)[:300]}"}, status_code=500)
         finally:
             lock.release()
 
@@ -107,14 +107,14 @@ def create_app() -> FastAPI:
     @app.post("/api/providers/{name}/ping")
     async def api_ping(name: str):
         if not known_provider(name):
-            return JSONResponse({"status": "error", "response": f"Provider inconnu ou sans clé : {name}"},
+            return JSONResponse({"status": "error", "response": f"Unknown provider or no key: {name}"},
                                 status_code=404)
         return await run_in_threadpool(router.ping_provider, name)
 
     @app.post("/api/providers/{name}/reset")
     async def api_provider_reset(name: str):
         if not known_provider(name):
-            return JSONResponse({"status": "error", "response": f"Provider inconnu ou sans clé : {name}"},
+            return JSONResponse({"status": "error", "response": f"Unknown provider or no key: {name}"},
                                 status_code=404)
         router.reset_provider(name)
         return {"status": "ok"}

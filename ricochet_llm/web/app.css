@@ -1,4 +1,4 @@
-/* Beige clair, encre bleue, formes géométriques. Un seul thème, volontairement sobre. */
+/* Light beige, blue ink, geometric shapes. A single, deliberately plain theme. */
 :root {
   --bg: #f3ecdf;
   --surface: #faf6ec;
@@ -25,7 +25,7 @@ button, textarea { font: inherit; color: inherit; }
 .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 .num { font-variant-numeric: tabular-nums; }
 
-/* ───────── En-tête ───────── */
+/* ───────── Header ───────── */
 .top { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding-block: 24px; flex-wrap: wrap; }
 .brand { display: flex; align-items: center; gap: 12px; }
 h1 { font-size: 17px; font-weight: 650; letter-spacing: .02em; }
@@ -59,7 +59,7 @@ h1 { font-size: 17px; font-weight: 650; letter-spacing: .02em; }
 .shape.cross::before, .shape.cross::after { content: ""; position: absolute; left: -1px; right: -1px; top: 4px; height: 2px; background: var(--c); transform: rotate(45deg); }
 .shape.cross::after { transform: rotate(-45deg); }
 
-/* ───────── Résumé ───────── */
+/* ───────── Summary ───────── */
 .next { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 12px 32px; padding-bottom: 20px; border-bottom: 1px solid var(--line); }
 .next .main { font-size: 26px; font-weight: 650; line-height: 1.2; }
 .next .main small { font-size: 14px; font-weight: 500; color: var(--muted); margin-left: 8px; }
@@ -153,8 +153,8 @@ h1 { font-size: 17px; font-weight: 650; letter-spacing: .02em; }
   .events li { grid-template-columns: 52px 10px 1fr; }
 }
 
-/* ───────── Écran large : tout tient dans la hauteur de la fenêtre, sans défilement de page ─────────
-   Les lignes se compressent selon la hauteur ; seuls la console et le journal défilent, dans leur cadre. */
+/* ───────── Wide screen: everything fits in the window height, no page scrolling ─────────
+   Rows compress with the height; only the console and the log scroll, inside their frame. */
 @media (min-width: 861px) {
   html, body { height: 100dvh; overflow: hidden; }
   body { display: flex; flex-direction: column; }

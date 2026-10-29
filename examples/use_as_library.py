@@ -1,4 +1,4 @@
-"""Utiliser le routeur comme une bibliothèque, sans serveur ni interface."""
+"""Use the router as a library, with no server or dashboard."""
 import logging
 
 from ricochet_llm import chat_detailed, quota_status, tool
@@ -7,18 +7,18 @@ logging.basicConfig(level=logging.INFO)
 
 
 @tool
-def jeter_de(faces: int = 6) -> int:
-    """Lance un dé.
+def roll_die(faces: int = 6) -> int:
+    """Roll a die.
 
     Args:
-        faces: Nombre de faces du dé
+        faces: Number of faces on the die
     """
     import random
     return random.randint(1, faces)
 
 
-history = []                                    # une liste par conversation (en mémoire)
-result = chat_detailed(history, "Lance un dé à 20 faces et commente le résultat.")
+history = []                                    # one list per conversation (in memory)
+result = chat_detailed(history, "Roll a 20-sided die and comment on the result.")
 print(result.answer)
-print(f"→ {result.provider} · {result.model} · {result.mode} · {result.latency_ms} ms · bascules : {result.trail}")
+print(f"→ {result.provider} · {result.model} · {result.mode} · {result.latency_ms} ms · failovers: {result.trail}")
 print({name: p["status"] for name, p in quota_status().items()})

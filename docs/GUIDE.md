@@ -1,118 +1,118 @@
-# Routeur LLM multi-providers « free tier » — guide technique
+# Multi-provider "free tier" LLM router: technical guide
 
-> Pour qui contribue au projet ou l'intègre. Démarrage et usage : voir [README](../README.md).
+> For anyone contributing to the project or integrating it. Getting started and usage: see the [README](../README.md).
 
-## 1. Principe
+## 1. Principle
 
-Une boucle agentique (chat + tool calling) qui ne dépend d'aucun fournisseur LLM unique. Elle s'appuie sur l'API OpenAI-compatible exposée par plusieurs providers gratuits (un seul SDK : `openai`, pointé sur chaque `base_url`) et bascule de l'un à l'autre.
+An agentic loop (chat + tool calling) that depends on no single LLM vendor. It relies on the OpenAI-compatible API exposed by several free providers (a single SDK: `openai`, pointed at each `base_url`) and fails over from one to the next.
 
-1. `catalog.py` liste les providers par ordre de préférence (surchargeable par `providers.json`), chacun avec un modèle **heavy**, un modèle **light** et, si besoin, des **modèles de repli** (`extra_models`) du même provider.
-2. Avant chaque appel, `_choose_provider_and_model()` sélectionne :
-   - **HEAVY** : le premier provider disponible (hors cooldown) dont le quota est inconnu ou ≥ `quota_min`, en privilégiant ceux qui gèrent les tools ; dans ce provider, le **premier modèle utilisable** (heavy, puis `extra_models`) ;
-   - **LIGHT** (tous sous le seuil) : celui qui a le plus de quota restant, sur son modèle léger.
-   Un modèle écarté ne met **pas** tout le provider de côté : l'état (pause, limite de jetons apprise) est tenu **par modèle**. Le provider n'est en pause que lorsque plus aucun de ses modèles ne peut répondre, jusqu'au premier retour.
-3. Chaque erreur d'appel est **classée** (`_classify_error`) ; la conversation n'est jamais perdue :
+1. `catalog.py` lists the providers in order of preference (overridable by `providers.json`), each with a **heavy** model, a **light** model and, if needed, **fallback models** (`extra_models`) from the same provider.
+2. Before each call, `_choose_provider_and_model()` selects:
+   - **HEAVY**: the first available provider (not in cooldown) whose quota is unknown or ≥ `quota_min`, favoring those that handle tools; within that provider, the **first usable model** (heavy, then `extra_models`);
+   - **LIGHT** (all below the threshold): the one with the most quota left, on its light model.
+   A model set aside does **not** sideline the whole provider: state (pause, learned token limit) is kept **per model**. The provider is paused only when none of its models can answer, until the first one comes back.
+3. Every call error is **classified** (`_classify_error`); the conversation is never lost:
 
-   | Erreur | Réaction |
+   | Error | Reaction |
    |---|---|
-   | `429` | le **modèle** est écarté (`Retry-After`, 60 s par défaut) ; un autre modèle du provider est essayé tout de suite ; sans autre modèle utilisable, le provider est en pause jusqu'au plus proche retour d'un modèle, quota à 0 |
-   | `413` « Limit N » | la limite N est **apprise** pour ce modèle, qui est écarté 30 min (les demandes plus grandes ne lui sont plus envoyées) ; mêmes règles que le 429 |
-   | réponse **vide** | modèle écarté 5 min, modèle suivant (un modèle qui raisonne a dépensé tous ses jetons avant d'écrire) |
-   | réseau / 5xx / timeout | 1 nouvelle tentative avec backoff, puis cooldown 30 s |
-   | `404` | modèle retiré du catalogue : écarté 15 min s'il y en a d'autres, sinon cooldown du provider 15 min |
-   | `401` / `403` | cooldown du provider 15 min (clé à corriger) |
-   | `400` / `410` / `422` | bascule pour cet appel seulement, sans cooldown |
-   | autre exception (bug local) | remontée telle quelle |
+   | `429` | the **model** is set aside (`Retry-After`, 60 s by default); another model of the provider is tried right away; with no other usable model, the provider is paused until the nearest model comes back, quota at 0 |
+   | `413` "Limit N" | the limit N is **learned** for this model, which is set aside for 30 min (larger requests are no longer sent to it); same rules as 429 |
+   | **empty** answer | model set aside for 5 min, next model (a reasoning model spent all its tokens before writing) |
+   | network / 5xx / timeout | 1 retry with backoff, then 30 s cooldown |
+   | `404` | model removed from the catalog: set aside for 15 min if there are others, otherwise provider cooldown for 15 min |
+   | `401` / `403` | provider cooldown for 15 min (key to fix) |
+   | `400` / `410` / `422` | failover for this call only, no cooldown |
+   | other exception (local bug) | raised as is |
 
-   Un provider écarté pendant un appel n'est jamais re-tenté dans ce même appel : la boucle se termine toujours (sinon `LLMRouterError` avec la dernière erreur de chaque provider). En cas d'échec, l'historique est remis dans son état d'origine.
-4. Les tool calls sont exécutés localement (registre `tools.py`) et réinjectés jusqu'à `finish_reason == "stop"` (8 tours max). Un outil inconnu, des arguments invalides ou une exception d'outil sont renvoyés **au modèle** comme résultat. Pendant un échange d'outils, on ne bascule jamais vers un provider sans tool calling.
+   A provider set aside during a call is never retried within that same call: the loop always terminates (otherwise `LLMRouterError` with each provider's last error). On failure, the history is restored to its original state.
+4. Tool calls are executed locally (`tools.py` registry) and fed back until `finish_reason == "stop"` (8 rounds max). An unknown tool, invalid arguments or a tool exception are returned **to the model** as the result. During a tool exchange, the router never switches to a provider without tool calling.
 
 ## 2. Architecture
 
-- `catalog.py` (données) → `router.py` (moteur et état) → `server.py` / `__main__.py` (entrées) → `web/` (interface). `parallel.py` répartit des traitements par lot entre les providers (section 6).
-- Trois portes d'entrée dans le moteur : `chat` (conversation avec outils), `generate` (un appel isolé : extraction, classification, lecture de documents) et `probe_models` (diagnostic : quels modèles listés répondent vraiment).
-- État observable par provider, tenu dans `router.py` sous un verrou : quota restant, cooldown, dernière erreur, derniers en-têtes `x-ratelimit-*`, sonde de quota, statistiques (ok, erreurs, tokens, latence), fenêtre d'appels, plus un journal d'événements. `quota_status()` le restitue, enrichi (jauges, expiration de clé) ; l'interface l'interroge via `GET /api/status` toutes les 3 s.
-- **Jauges de quota** : chaque paire `x-ratelimit-remaining-X` / `x-ratelimit-limit-X` devient une jauge (`quota_labels` donne les libellés). OpenRouter ne renvoie rien en en-tête : une sonde (`probe`) lit `GET /key` (`free_model_daily_requests`, `expires_at`), au plus une fois par minute.
-- **Expiration de clé** : `<NOM_DE_LA_CLÉ>_EXPIRES=AAAA-MM-JJ` dans `.env`, ou `expires_at` fourni par la sonde.
-- **Sécurité** : le serveur écoute en `127.0.0.1` par défaut et n'a pas d'authentification (ses actions consomment des quotas). Ne l'exposez pas sans ajouter une authentification.
+- `catalog.py` (data) → `router.py` (engine and state) → `server.py` / `__main__.py` (entry points) → `web/` (interface). `parallel.py` spreads batch jobs across providers (section 6).
+- Three entry points into the engine: `chat` (conversation with tools), `generate` (a single call: extraction, classification, document reading) and `probe_models` (diagnostics: which listed models actually answer).
+- Observable state per provider, kept in `router.py` under a lock: remaining quota, cooldown, last error, latest `x-ratelimit-*` headers, quota probe, statistics (ok, errors, tokens, latency), call window, plus an event log. `quota_status()` returns it, enriched (gauges, key expiry); the interface polls it through `GET /api/status` every 3 s.
+- **Quota gauges**: each `x-ratelimit-remaining-X` / `x-ratelimit-limit-X` pair becomes a gauge (`quota_labels` provides the labels). OpenRouter returns nothing in headers: a probe (`probe`) reads `GET /key` (`free_model_daily_requests`, `expires_at`), at most once a minute.
+- **Key expiry**: `<KEY_NAME>_EXPIRES=YYYY-MM-DD` in `.env`, or `expires_at` supplied by the probe.
+- **Security**: the server listens on `127.0.0.1` by default and has no authentication (its actions consume quotas). Don't expose it without adding authentication.
 
-## 3. Ajouter ou modifier un provider
+## 3. Adding or changing a provider
 
-Sans toucher au code : `providers.json` (voir `providers.example.json` et la docstring de `catalog.py`) — surcharge un provider, en retire un, en ajoute un, change l'ordre. Le fichier est validé au chargement (`ConfigError` explicite). Pour un provider livré avec le paquet, ajouter une entrée à `BUILTIN_SPECS`. **Avant de choisir un modèle, le tester par un vrai appel** (voir pièges). Sans en-tête de quota, laisser `quota_header` à `null` : seuls les 429 déclencheront alors le cooldown. Lancer `python -m ricochet_llm models <provider>` : **la liste d'un provider gratuit ne dit pas ce qui répond**. Pour un modèle qui raisonne, renseigner `model_options` (couper le raisonnement) ; pour un provider à budget par modèle, `token_limits` ; pour un provider à débit limité, `max_concurrency` et `min_interval_s`. Pour une sonde dédiée, ajouter une fonction dans `_PROBES` (`router.py`).
+Without touching the code: `providers.json` (see `providers.example.json` and the docstring of `catalog.py`) overrides a provider, removes one, adds one, changes the order. The file is validated on load (explicit `ConfigError`). For a provider shipped with the package, add an entry to `BUILTIN_SPECS`. **Before choosing a model, test it with a real call** (see pitfalls). With no quota header, leave `quota_header` at `null`: only 429s will then trigger the cooldown. Run `python -m ricochet_llm models <provider>`: **a free provider's list doesn't tell you what answers**. For a reasoning model, set `model_options` (turn reasoning off); for a provider with a per-model budget, `token_limits`; for a rate-limited provider, `max_concurrency` and `min_interval_s`. For a dedicated probe, add a function to `_PROBES` (`router.py`).
 
-## 4. Intégrer dans un autre projet
+## 4. Integrating into another project
 
-`pip install -e .` puis `from ricochet_llm import chat, tool, set_system_prompt`. Déclarez vos outils avec `@tool` (schéma déduit de la signature et de la docstring). Le client `openai` est synchrone : dans une application asynchrone, appelez `chat` via `run_in_threadpool` / `run_in_executor` (comme `server.py`). Les sessions du serveur sont en mémoire (suffisant pour un outil interne mono-instance ; sur plusieurs instances, prévoir Redis/Firestore). Ne pas envoyer deux messages en parallèle sur la même session (le serveur renvoie 409). Sans outil enregistré, aucun paramètre `tools` n'est envoyé aux providers.
+`pip install -e .` then `from ricochet_llm import chat, tool, set_system_prompt`. Declare your tools with `@tool` (schema inferred from the signature and docstring). The `openai` client is synchronous: in an async application, call `chat` through `run_in_threadpool` / `run_in_executor` (like `server.py`). Server sessions are in memory (enough for a single-instance internal tool; with several instances, plan for Redis/Firestore). Don't send two messages in parallel on the same session (the server returns 409). With no registered tool, no `tools` parameter is sent to providers.
 
-## 5. Comportements des providers à connaître
+## 5. Provider behaviors to know
 
-Les offres gratuites changent vite (modèles retirés, limites modifiées) : **testez un modèle par un vrai appel avant de le configurer** (`python -m ricochet_llm models <provider>`), la liste `/models` d'un provider n'est pas fiable.
+Free tiers change fast (models retired, limits changed): **test a model with a real call before configuring it** (`python -m ricochet_llm models <provider>`), a provider's `/models` list is not reliable.
 
-**Refus et pauses**
-- **Quel refus dit quoi** : un **402** ou une limite par minute à zéro (`x-ratelimit-limit-req-minute = 0`) = offre non activée, pause d'une heure. Un **429 sur un plafond journalier** (Gemini `GenerateRequestsPerDayPerProjectPerModel`, Cloudflare « daily free allocation », OpenRouter `free-models-per-day`) ne revient pas avant des heures : le retenter chaque minute ne ferait que perdre un appel. Un **429 sans `Retry-After`** mais avec `x-ratelimit-reset-tokens` (« 46.5s », « 1m30s ») : on attend la remise à zéro annoncée.
-- **Le budget de jetons annoncé** (`x-ratelimit-remaining-tokens` / `-reset-tokens`) est retenu par modèle après chaque réponse réussie : un modèle qui n'a plus de quoi traiter la demande n'est pas appelé. `x-ratelimit-limit-tokens` fixe la plus grande demande acceptable, sans attendre un 413.
-- **Clés d'essai à durée limitée** (NVIDIA, OpenRouter) : passée la date, 401/403 → pause de 15 min en boucle, sans réparation automatique. `<NOM_DE_LA_CLÉ>_EXPIRES=AAAA-MM-JJ` affiche l'échéance.
-- **Quotas par fenêtre différente** (Groq : jetons/min et requêtes/jour ; Cerebras : jetons/jour) : les `quota_min` du catalogue sont calibrés sur ces fenêtres, à revoir si on change de modèle. Un quota lu depuis plus de 5 min redevient « inconnu » et le provider est re-sondé.
-- **Le SDK ne doit pas re-tenter lui-même** : clients créés avec `max_retries=0`, sinon il dormirait sur un 429 avant que le routeur bascule.
+**Refusals and pauses**
+- **Which refusal means what**: a **402** or a per-minute limit of zero (`x-ratelimit-limit-req-minute = 0`) = plan not enabled, one-hour pause. A **429 on a daily cap** (Gemini `GenerateRequestsPerDayPerProjectPerModel`, Cloudflare "daily free allocation", OpenRouter `free-models-per-day`) doesn't come back for hours: retrying it every minute would only waste a call. A **429 without `Retry-After`** but with `x-ratelimit-reset-tokens` ("46.5s", "1m30s"): wait for the announced reset.
+- **The advertised token budget** (`x-ratelimit-remaining-tokens` / `-reset-tokens`) is kept per model after each successful response: a model that can't handle the request is not called. `x-ratelimit-limit-tokens` sets the largest acceptable request, without waiting for a 413.
+- **Time-limited trial keys** (NVIDIA, OpenRouter): past the date, 401/403 → 15-minute pause in a loop, with no automatic repair. `<KEY_NAME>_EXPIRES=YYYY-MM-DD` shows the expiry.
+- **Quotas with different windows** (Groq: tokens/min and requests/day; Cerebras: tokens/day): the catalog's `quota_min` values are calibrated on these windows, to be revisited if you change model. A quota read more than 5 min ago goes back to "unknown" and the provider is probed again.
+- **The SDK must not retry on its own**: clients are created with `max_retries=0`, otherwise it would sleep on a 429 before the router fails over.
 
-**Réponses des modèles**
-- **Modèles qui raisonnent** (gpt-oss, Nemotron…) : `max_tokens` inclut les jetons de raisonnement ; une réponse vide déclenche une bascule. Pour les Nemotron de NVIDIA, `model_options` coupe le raisonnement (`enable_thinking: false`) ; un délai plus long n'y change rien.
-- **`<think>...</think>` dans `content`** : jamais rendu comme réponse ; une réponse faite de la seule réflexion compte comme vide (bascule).
-- **Petits modèles** : ils renvoient parfois le JSON d'un tool call en texte brut. `cleaning.strip_tool_artifacts` retire **uniquement** les JSON reconnus comme tool calls (nom connu, ou `{"type": "function", …}`) et les balises `<function=…>` / `<tool_call>` ; le code et le JSON légitimes sont conservés. Si le nettoyage vide la réponse, on bascule et on relance une fois avec « Réponds à ma question précédente ».
-- **Gemini et les tools** : Gemini 3.x exige un champ `thought_signature` sur le second tour d'un échange d'outils, que le routeur ne rejoue pas : `supports_tools: False`. Chaîne de repli `gemini-3.6-flash`, `3.5-flash`, `3.1-pro-preview` (le plus capable, mais son quota gratuit par jour est très court).
-- **Mistral** : une clé valide peut n'avoir aucun droit de chat tant que le plan gratuit n'est pas activé ; le routeur met alors Mistral en pause une heure et utilise les autres.
-- **OpenRouter** : un 429 « temporarily rate-limited upstream » vient souvent du fournisseur amont du modèle gratuit, pas de votre quota.
-- **Cerebras** : plus d'offre gratuite permanente d'après les sources récentes : carte « désactivée » sans clé.
+**Model answers**
+- **Reasoning models** (gpt-oss, Nemotron...): `max_tokens` includes reasoning tokens; an empty answer triggers a failover. For NVIDIA's Nemotron, `model_options` turns reasoning off (`enable_thinking: false`); a longer timeout changes nothing there.
+- **`<think>...</think>` in `content`**: never returned as the answer; an answer made only of reasoning counts as empty (failover).
+- **Small models**: they sometimes return a tool call's JSON as plain text. `cleaning.strip_tool_artifacts` removes **only** JSON recognized as tool calls (known name, or `{"type": "function", ...}`) and `<function=...>` / `<tool_call>` tags; legitimate code and JSON are kept. If the cleanup empties the answer, the router fails over and retries once with "Answer my previous question."
+- **Gemini and tools**: Gemini 3.x requires a `thought_signature` field on the second round of a tool exchange, which the router doesn't replay: `supports_tools: False`. Fallback chain `gemini-3.6-flash`, `3.5-flash`, `3.1-pro-preview` (the most capable, but its free daily quota is very short).
+- **Mistral**: a valid key may have no chat rights until the free plan is activated; the router then pauses Mistral for an hour and uses the others.
+- **OpenRouter**: a 429 "temporarily rate-limited upstream" often comes from the free model's upstream provider, not from your quota.
+- **Cerebras**: no permanent free tier any more according to recent sources: card "disabled" without a key.
 
-**Ordre par défaut** : Groq, NVIDIA, Ollama, Cloudflare, OpenRouter, Gonka (6 requêtes/min et 1 M de jetons par mois : dernier des gratuits), Gemini, Mistral. `RICOCHET_ORDER=groq,gemini` change la tête de liste sans fichier.
+**Default order**: Groq, NVIDIA, Ollama, Cloudflare, OpenRouter, Gonka (6 requests/min and 1M tokens per month: last of the free ones), Gemini, Mistral. `RICOCHET_ORDER=groq,gemini` changes the head of the list without a file.
 
-**Confidentialité** : plusieurs offres gratuites journalisent ou utilisent les prompts pour entraîner leurs modèles. N'y envoyez pas de données personnelles sans avoir vérifié leurs conditions (`ricochet_llm.privacy` repère les plus évidentes).
+**Privacy**: several free tiers log prompts or use them to train their models. Don't send them personal data without checking their terms (`ricochet_llm.privacy` spots the most obvious).
 
-## 5 bis. Bonnes pratiques de la lecture par lot
+## 5 bis. Best practices for batch reading
 
-- **Un JSON valide mais vide n'est pas « aucun résultat ».** Un modèle trop faible rend du JSON bien formé sans rien extraire. Le routeur ne peut pas le voir (la réponse n'est pas vide) : **validez le contenu côté appelant** (une citation retrouvée dans la source, par exemple) et comparez un modèle à une référence sur quelques entrées AVANT de l'activer.
-- **Les petits modèles lisent moins.** Bons en dernier repli, pas en premier choix.
-- **Une limite de débit n'est pas une limite de simultanéité.** « 40 requêtes par minute » porte sur le rythme de DÉPART : réglez `max_concurrency` et `min_interval_s` pour rester sous la limite plutôt que de vous borner à 1 ou 2 travailleurs. Une salve passe, un flux soutenu atteint la limite.
-- **Un budget de jetons par minute PAR MODÈLE** (Groq) : un 429 ou un 413 sur un modèle ne dit rien des autres, d'où l'état par modèle.
-- **Le délai du chat n'est pas celui d'une lecture.** Le délai du catalogue est calibré pour le chat (on bascule vite), pas pour une longue réponse JSON. `generate(timeout=60)` allonge le délai pour cet appel, ne le raccourcit jamais.
-- **Comptez par le provider qui a RÉPONDU**, pas par celui qu'on avait préféré : lisez `GenerateResult.provider` et `.model`. Les durées mesurées autour d'un appel incluent les bascules.
-- **Comparez des modèles sur les mêmes entrées** : l'écart entre échantillons différents dépasse souvent celui entre modèles.
-- **Quotas et licences** : NVIDIA ne renvoie aucun en-tête de quota et la licence de son offre gratuite est « recherche, développement et test » ; Gonka plafonne les requêtes par minute et les jetons par mois ; Cloudflare plafonne par jour. Ne laissez pas un traitement par lot épuiser ce dont le chat a besoin en repli : lancez-le la nuit, ou excluez ces providers (`only=`).
-- **Les clés collées dans un `.env`** : une valeur beaucoup trop longue (jeton collé plusieurs fois, commentaire, guillemets) donne 401 ou 400 « Invalid format for Authorization header ». Vérifiez la longueur et les caractères sans afficher la clé. Une variable mal nommée est acceptée via `env_aliases`.
-- **Windows : un clic dans la console peut tout figer.** Le mode « édition rapide » met la console en sélection : le premier `print` reste bloqué tant qu'on n'appuie pas sur Entrée, et un programme qui écrit dans la console, même dans un thread, peut figer tous ses appels en cours. Désactivez l'édition rapide, ou utilisez Windows Terminal.
-- **Enregistrez au fil de l'eau** : écrivez le résultat de chaque élément dès qu'il est lu (écriture atomique : fichier temporaire puis renommage). Une interruption ne perd alors que les requêtes en cours.
-- **Tests : `load_dotenv()` modifie `os.environ` pour toute la suite.** Un test qui importe un module qui charge le `.env` réel injecte de vraies clés dans les tests suivants. Neutralisez-le (`mock.patch("dotenv.load_dotenv")`) avant l'import.
+- **Valid but empty JSON is not "no result".** A model that is too weak returns well-formed JSON without extracting anything. The router can't see it (the answer isn't empty): **validate the content on the caller's side** (a quote found in the source, for example) and compare a model to a reference on a few inputs BEFORE enabling it.
+- **Small models read less.** Good as a last fallback, not as a first choice.
+- **A rate limit is not a concurrency limit.** "40 requests per minute" applies to the START rate: set `max_concurrency` and `min_interval_s` to stay under the limit rather than capping yourself at 1 or 2 workers. A burst goes through, a sustained flow hits the limit.
+- **A token budget per minute PER MODEL** (Groq): a 429 or a 413 on one model says nothing about the others, hence the per-model state.
+- **The chat timeout isn't a reading timeout.** The catalog timeout is calibrated for chat (fail over fast), not for a long JSON answer. `generate(timeout=60)` lengthens the timeout for this call and never shortens it.
+- **Count by the provider that ANSWERED**, not the one you preferred: read `GenerateResult.provider` and `.model`. Durations measured around a call include the failovers.
+- **Compare models on the same inputs**: the gap between different samples is often larger than the gap between models.
+- **Quotas and licenses**: NVIDIA returns no quota header and its free tier's license is "research, development and testing"; Gonka caps requests per minute and tokens per month; Cloudflare caps per day. Don't let a batch job use up what chat needs as a fallback: run it at night, or exclude those providers (`only=`).
+- **Keys pasted into a `.env`**: a value that is far too long (token pasted several times, comment, quotes) gives 401 or 400 "Invalid format for Authorization header". Check the length and characters without printing the key. A misnamed variable is accepted through `env_aliases`.
+- **Windows: a click in the console can freeze everything.** "Quick edit" mode puts the console in selection mode: the first `print` stays blocked until you press Enter, and a program that writes to the console, even in a thread, can freeze all its calls in flight. Turn off quick edit, or use Windows Terminal.
+- **Save as you go**: write each item's result as soon as it is read (atomic write: temporary file then rename). An interruption then loses only the requests in flight.
+- **Tests: `load_dotenv()` modifies `os.environ` for the whole suite.** A test that imports a module that loads the real `.env` injects real keys into the following tests. Neutralize it (`mock.patch("dotenv.load_dotenv")`) before the import.
 
-## 6. Lectures par lot : `generate` et `run_parallel`
+## 6. Batch reading: `generate` and `run_parallel`
 
 ```python
 from ricochet_llm import generate, run_parallel
 
-def lire(document, provider):                      # exécutée dans un thread
-    r = generate(prompt(document), system=CONSIGNE, max_tokens=8192, timeout=60, prefer=provider)
-    if r.truncated:                                # arrêtée sur max_tokens : le JSON peut être coupé
-        raise ValueError("réponse tronquée")
-    sauvegarder(document, r)                       # au fil de l'eau ; noter r.provider et r.model
+def read(document, provider):                      # runs in a thread
+    r = generate(prompt(document), system=INSTRUCTIONS, max_tokens=8192, timeout=60, prefer=provider)
+    if r.truncated:                                # stopped on max_tokens: the JSON may be cut
+        raise ValueError("truncated answer")
+    save(document, r)                              # as you go; record r.provider and r.model
 
-bilan = run_parallel(documents, lire, limits={"nvidia": 10})
-# {"processed": …, "errors": …, "remaining": …, "interrupted": False, "per_provider": {"groq": …, …}}
+summary = run_parallel(documents, read, limits={"nvidia": 10})
+# {"processed": ..., "errors": ..., "remaining": ..., "interrupted": False, "per_provider": {"groq": ..., ...}}
 ```
 
-- `generate` bascule entre providers **et** entre modèles comme `chat`, sans outils. Il ne renvoie **jamais** une réponse vide (le modèle est écarté, le suivant essayé). `timeout` allonge le délai d'un appel ; `only` restreint les providers ; `prefer` en désigne un à essayer d'abord.
-- `run_parallel` donne à chaque provider **ses** travailleurs (`max_concurrency` du catalogue, ou `limits`), tous tirant dans la même file (l'ordre est conservé), avec un écart minimal entre départs (`min_interval_s`). Un provider en pause ne prend pas de travail ; plus aucun provider disponible, ou `Interrupted` levée par `work` : arrêt propre, les éléments restants sont rendus (`remaining`). Une erreur sur un élément est comptée sans arrêter les autres.
-- **Choisissez les providers du lot** (`only=`) : un provider à quota mensuel court (Gonka) ou plafonné par jour (Cloudflare) est un repli du chat, pas un moteur de rattrapage.
-- Avant de lancer, une tranche de ~100 éléments, puis un contrôle de qualité **par provider et par modèle** (éléments par document, part de citations retrouvées, réponses illisibles).
+- `generate` fails over between providers **and** between models like `chat`, without tools. It **never** returns an empty answer (the model is set aside, the next one tried). `timeout` lengthens a call's timeout; `only` restricts the providers; `prefer` names one to try first.
+- `run_parallel` gives each provider **its own** workers (the catalog's `max_concurrency`, or `limits`), all drawing from the same queue (order is kept), with a minimum gap between starts (`min_interval_s`). A provider in pause takes no work; with no provider left available, or `Interrupted` raised by `work`: clean stop, the remaining items are returned (`remaining`). An error on one item is counted without stopping the others.
+- **Choose the batch's providers** (`only=`): a provider with a short monthly quota (Gonka) or a daily cap (Cloudflare) is a chat fallback, not a catch-up engine.
+- Before launching, a slice of ~100 items, then a quality check **per provider and per model** (items per document, share of quotes found, unreadable answers).
 
-## 6 bis. Réponses JSON imparfaites : `read_json`
+## 6 bis. Imperfect JSON answers: `read_json`
 
-Certains modèles écrivent leur réponse deux fois (l'objet complet, un guillemet, une seconde copie), la faisait suivre d'un champ en trop (`...}}"produits":[]}`) ou glissait un `null` entre deux paires clé/valeur. `read_json(texte)` lit strictement d'abord (inchangé pour une réponse valide), puis seulement en cas d'échec garde le premier objet complet. Une réponse coupée (`max_tokens`) ou qui boucle reste `None` : on la relit. Il ne dit rien du **contenu** : un JSON valide peut contenir des valeurs inventées, le contrôle de fond (la citation est-elle dans la source ?) reste à vous.
+Some models write their answer twice (the complete object, a quote mark, a second copy), follow it with an extra field (`...}}"products":[]}`) or slip a `null` between two key/value pairs. `read_json(text)` reads strictly first (unchanged for a valid answer), then only on failure keeps the first complete object. A truncated answer (`max_tokens`) or one that loops stays `None`: read it again. It says nothing about the **content**: valid JSON can contain made-up values, and the substantive check (is the quote in the source?) remains up to you.
 
 ## 7. Checklist
 
-1. `pip install -e ".[server]"`, créer `.env` depuis `.env.example`, renseigner au moins une clé.
-2. Lancer `python -m ricochet_llm serve --open`, cliquer **Tester** sur chaque carte : clé valide et latence correcte ?
-3. Déclarer vos outils (`@tool`) dans un plugin (`RICOCHET_PLUGIN`) ou dans votre code.
-4. `python -m unittest discover -s tests -v` après toute modification du moteur.
-5. Avant tout traitement par lot : `python -m ricochet_llm models <provider>` (modèles réellement appelables), une tranche de ~100 éléments, un bilan par provider ET par modèle.
-6. Avant d'envoyer un texte saisi par un utilisateur à un free tier : `find_personal_data(texte)`. Pour la recherche Web : `python -m ricochet_llm search "test"` avec une vraie clé (les adaptateurs n'ont été testés que contre des réponses simulées).
-7. Tester la bascule en réel : mettre un `quota_min` très haut sur le premier provider (`catalog.py`) et vérifier dans le journal que le suivant prend le relais.
+1. `pip install -e ".[server]"`, create `.env` from `.env.example`, fill in at least one key.
+2. Run `python -m ricochet_llm serve --open`, click **Test** on each card: valid key and decent latency?
+3. Declare your tools (`@tool`) in a plugin (`RICOCHET_PLUGIN`) or in your code.
+4. `python -m unittest discover -s tests -v` after any change to the engine.
+5. Before any batch job: `python -m ricochet_llm models <provider>` (models that can really be called), a slice of ~100 items, a summary per provider AND per model.
+6. Before sending text typed by a user to a free tier: `find_personal_data(text)`. For web search: `python -m ricochet_llm search "test"` with a real key (the adapters have only been tested against simulated responses).
+7. Test the failover for real: set a very high `quota_min` on the first provider (`catalog.py`) and check in the log that the next one takes over.

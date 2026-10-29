@@ -8,5 +8,5 @@ build/
 dist/
 .ruff_cache/
 
-# Ancien code de référence, hors dépôt
+# Old reference code, kept out of the repository
 _archive/

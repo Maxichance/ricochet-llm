@@ -1,11 +1,11 @@
 """
-Ligne de commande :
-  python -m ricochet_llm                 → serveur web + tableau de bord (défaut)
-  python -m ricochet_llm serve --port N  → idem, port choisi
-  python -m ricochet_llm status          → état des providers dans le terminal
-  python -m ricochet_llm chat "bonjour"  → une question, une réponse
-  python -m ricochet_llm models nvidia   → quels modèles listés par le provider répondent VRAIMENT (diagnostic)
-  python -m ricochet_llm search "requête" → recherche Web par API gratuite (Exa, Tavily, LangSearch), quota suivi
+Command line:
+  python -m ricochet_llm                 → web server + dashboard (default)
+  python -m ricochet_llm serve --port N  → same, with a chosen port
+  python -m ricochet_llm status          → provider status in the terminal
+  python -m ricochet_llm chat "hello"    → one question, one answer
+  python -m ricochet_llm models nvidia   → which models listed by the provider REALLY answer (diagnostic)
+  python -m ricochet_llm search "query"  → web search through free APIs (Exa, Tavily, LangSearch), quota tracked
 """
 import argparse
 import logging
@@ -19,16 +19,16 @@ from .plugins import PluginError, load_plugin
 
 def _fmt_status() -> str:
     router.refresh_probes(force=True)
-    rows = [("PROVIDER", "ÉTAT", "PAUSE", "LATENCE", "OK/ERR", "QUOTA")]
+    rows = [("PROVIDER", "STATUS", "PAUSE", "LATENCY", "OK/ERR", "QUOTA")]
     for p in router.quota_status().values():
         if not p["configured"]:
-            rows.append((p["label"], "désactivé", "", "", "", f"clé absente ({p['env_key']})"))
+            rows.append((p["label"], "disabled", "", "", "", f"key missing ({p['env_key']})"))
             continue
         st = p["stats"]
         quota = " · ".join(
             f"{lim['label']} {lim['remaining']}" + (f"/{lim['limit']}" if lim["limit"] else "")
             for lim in p["limits"]
-        ) or "non communiqué"
+        ) or "not reported"
         rows.append((
             p["label"], p["status"], f"{p['cooldown_s']}s" if p["cooldown_s"] else "",
             f"{st['avg_latency_ms']} ms" if st["avg_latency_ms"] else "",
@@ -39,13 +39,13 @@ def _fmt_status() -> str:
 
 
 def _fmt_search_status() -> str:
-    """Moteurs de recherche Web, sous les providers de modèles. Rien si aucune clé n'est configurée."""
+    """Web search engines, listed below the model providers. Nothing if no key is configured."""
     engines = [e for e in search.status()["providers"] if e["configured"]]
     if not engines:
         return ""
-    lines = ["", "", "RECHERCHE WEB  ÉTAT          CONSOMMÉ"]
+    lines = ["", "", "WEB SEARCH     STATUS        USED"]
     for e in engines:
-        state = "en pause" if e["paused"] else "disponible" if e["available"] else "quota atteint"
+        state = "paused" if e["paused"] else "available" if e["available"] else "quota reached"
         quota = f"/{e['quota']:g}" if e["quota"] else ""
         lines.append(f"{e['label']:<14} {state:<13} {e['used']:g}{quota} {e['unit']}/{e['period']}")
     return "\n".join(lines)
@@ -60,19 +60,24 @@ def _serve(host: str, port: int, open_browser: bool, allow_remote: bool) -> int:
 
         from .server import create_app
     except ImportError:
-        print("Le tableau de bord demande des dépendances en plus : pip install \"ricochet-llm[server]\"", file=sys.stderr)
+        print("The dashboard needs extra dependencies: pip install \"ricochet-llm[server]\"", file=sys.stderr)
         return 1
 
     if host not in _LOCAL_HOSTS and not allow_remote:
-        print(f"Refusé : écouter sur {host} expose le tableau de bord (sans authentification) au réseau.\n"
-              "Ajoutez --allow-remote si c'est voulu, de préférence derrière un proxy authentifié.", file=sys.stderr)
+        print(f"Refused: listening on {host} exposes the dashboard (no authentication) to the network.\n"
+              "Add --allow-remote if that is intended, preferably behind an authenticated proxy.", file=sys.stderr)
         return 2
     url = f"http://{host}:{port}"
-    print(f"Tableau de bord : {url}   (Ctrl+C pour arrêter)")
+    print(f"Dashboard: {url}   (Ctrl+C to stop)")
     if open_browser:
         threading.Timer(1.0, lambda: webbrowser.open(url)).start()
     uvicorn.run(create_app(), host=host, port=port, log_level="warning")
     return 0
+
+
+def _reasoning_only(row: dict) -> bool:
+    """Empty answer, but the model did write some reasoning (decided from the data, not from the status text)."""
+    return bool(row.get("reasoning")) and not row.get("content_chars")
 
 
 def main(argv=None) -> int:
@@ -84,24 +89,24 @@ def main(argv=None) -> int:
 
     parser = argparse.ArgumentParser(prog="ricochet-llm", description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("-v", "--verbose", action="store_true", help="logs détaillés")
+    parser.add_argument("-v", "--verbose", action="store_true", help="verbose logs")
     sub = parser.add_subparsers(dest="cmd")
-    serve = sub.add_parser("serve", help="serveur web + tableau de bord")
-    serve.add_argument("--host", default="127.0.0.1", help="127.0.0.1 par défaut (local uniquement)")
+    serve = sub.add_parser("serve", help="web server + dashboard")
+    serve.add_argument("--host", default="127.0.0.1", help="127.0.0.1 by default (local only)")
     serve.add_argument("--port", type=int, default=8765)
-    serve.add_argument("--open", action="store_true", help="ouvre le navigateur")
-    serve.add_argument("--allow-remote", action="store_true", help="autorise un --host non local (sans authentification !)")
-    sub.add_parser("status", help="état des providers")
-    chat = sub.add_parser("chat", help="poser une question")
+    serve.add_argument("--open", action="store_true", help="open the browser")
+    serve.add_argument("--allow-remote", action="store_true", help="allow a non-local --host (no authentication!)")
+    sub.add_parser("status", help="provider status")
+    chat = sub.add_parser("chat", help="ask a question")
     chat.add_argument("message")
-    models = sub.add_parser("models", help="sonder les modèles listés par un provider : lesquels répondent vraiment ?")
+    models = sub.add_parser("models", help="probe the models listed by a provider: which ones really answer?")
     models.add_argument("provider")
-    models.add_argument("--all", action="store_true", help="inclure aussi embeddings, vision seule, parole…")
-    models.add_argument("--timeout", type=float, default=40.0, help="secondes par modèle (40 par défaut)")
-    find = sub.add_parser("search", help="recherche Web par API gratuite")
+    models.add_argument("--all", action="store_true", help="also include embeddings, vision-only, speech...")
+    models.add_argument("--timeout", type=float, default=40.0, help="seconds per model (40 by default)")
+    find = sub.add_parser("search", help="web search through a free API")
     find.add_argument("query")
-    find.add_argument("-n", type=int, default=6, help="nombre de résultats (6 par défaut, 10 au plus)")
-    find.add_argument("--content", action="store_true", help="demande le texte des pages quand le moteur le donne")
+    find.add_argument("-n", type=int, default=6, help="number of results (6 by default, 10 max)")
+    find.add_argument("--content", action="store_true", help="ask for the page text when the engine provides it")
 
     args = parser.parse_args(argv)
     logging.basicConfig(level=logging.INFO if args.verbose else logging.WARNING,
@@ -110,7 +115,7 @@ def main(argv=None) -> int:
     try:
         load_plugin()
     except PluginError as e:
-        print(f"Erreur : {e}", file=sys.stderr)
+        print(f"Error: {e}", file=sys.stderr)
         return 1
 
     if args.cmd in (None, "serve"):
@@ -122,27 +127,27 @@ def main(argv=None) -> int:
         try:
             rows = router.probe_models(args.provider, timeout=args.timeout, include_all=args.all)
         except KeyError:
-            print(f"Erreur : provider inconnu ou sans clé : {args.provider}", file=sys.stderr)
+            print(f"Error: unknown provider or no key: {args.provider}", file=sys.stderr)
             return 1
-        ok = [r for r in rows if r["status"] in ("ok", "raisonne")]
-        print(f"{len(rows)} modèle(s) sondé(s) : {len(ok)} répondent, {len(rows) - len(ok)} non.")
+        ok = [r for r in rows if r["status"] == "ok" or _reasoning_only(r)]
+        print(f"{len(rows)} model(s) probed: {len(ok)} answer, {len(rows) - len(ok)} do not.")
         print()
         for r in rows:
-            note = "  ← raisonne : couper le raisonnement (model_options) ou relever max_tokens" if r["status"] == "raisonne" else ""
+            note = "  ← reasons: turn reasoning off (model_options) or raise max_tokens" if _reasoning_only(r) else ""
             print(f"  {r['status']:<20} {r['latency_s']:>5.1f} s  {r['model']}{note}")
     elif args.cmd == "search":
         found = search.search(args.query, n=args.n, content=args.content)
         if found.status not in (search.SUCCESS, search.EMPTY):
-            print(f"Erreur : {found.error or found.status}", file=sys.stderr)
+            print(f"Error: {found.error or found.status}", file=sys.stderr)
             return 1
         for page in found.results:
             print(f"- {page['title']}\n  {page['url']}\n  {page['snippet']}")
-        print(f"\n[{found.engine or '-'} · {len(found.results)} résultat(s) · coût {found.cost:g}]", file=sys.stderr)
+        print(f"\n[{found.engine or '-'} · {len(found.results)} result(s) · cost {found.cost:g}]", file=sys.stderr)
     elif args.cmd == "chat":
         try:
             result = router.chat_detailed([], args.message)
         except router.LLMRouterError as e:
-            print(f"Erreur : {e}", file=sys.stderr)
+            print(f"Error: {e}", file=sys.stderr)
             return 1
         print(result.answer)
         print(f"\n[{result.provider} · {result.model} · {result.mode} · {result.latency_ms} ms]", file=sys.stderr)

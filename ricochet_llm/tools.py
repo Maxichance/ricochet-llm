@@ -1,19 +1,19 @@
 """
-Registre d'outils (tool calling) : décrire une fonction Python suffit, le schéma JSON est déduit de sa signature.
+Tool registry (tool calling): describing a Python function is enough, the JSON schema is inferred from its signature.
 
     from ricochet_llm import tool
 
     @tool
-    def rechercher_client(email: str) -> dict:
-        \"\"\"Recherche un client par email.
+    def find_customer(email: str) -> dict:
+        \"\"\"Looks up a customer by email.
 
         Args:
-            email: Email du client
+            email: Customer email
         \"\"\"
-        return {"email": email, "nom": "Dupont"}
+        return {"email": email, "name": "Smith"}
 
-Le modèle ne voit que la description et le schéma ; le retour doit être sérialisable en JSON.
-Toute erreur levée par l'outil est renvoyée au modèle (qui peut se corriger) au lieu de planter la conversation.
+The model only sees the description and the schema; the return value must be JSON-serializable.
+Any error raised by the tool is returned to the model (which can correct itself) instead of crashing the conversation.
 """
 import inspect
 import json
@@ -25,14 +25,14 @@ from typing import Any, Callable, Dict, List, Literal, Optional, Union, get_args
 
 logger = logging.getLogger(__name__)
 
-_NAME_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")     # contrainte de l'API OpenAI sur les noms de fonctions
+_NAME_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")     # OpenAI API constraint on function names
 _JSON_TYPES = {str: "string", int: "integer", float: "number", bool: "boolean",
                list: "array", tuple: "array", set: "array", dict: "object"}
 _UNION_TYPES = tuple(t for t in (Union, getattr(types, "UnionType", None)) if t is not None)
 
 
 def _json_schema(annotation) -> dict:
-    """Annotation Python → fragment de JSON Schema (repli : string)."""
+    """Python annotation → JSON Schema fragment (fallback: string)."""
     if annotation is inspect.Parameter.empty or annotation is Any:
         return {"type": "string"}
     origin = get_origin(annotation)
@@ -51,7 +51,7 @@ def _json_schema(annotation) -> dict:
 
 
 def _split_doc(doc: str):
-    """(description, {paramètre: description}) depuis une docstring de style Google (« Args: »)."""
+    """(description, {parameter: description}) from a Google-style docstring ("Args:")."""
     lines = doc.strip().splitlines()
     description, arg_docs, in_args, current = [], {}, False, None
     for line in lines:
@@ -62,7 +62,7 @@ def _split_doc(doc: str):
         if not in_args:
             description.append(stripped)
             continue
-        if line and not line[0].isspace():                        # nouvelle section : fin de « Args: »
+        if line and not line[0].isspace():                        # new section: end of "Args:"
             in_args = False
             continue
         m = re.match(r"^(\w+)\s*(?:\([^)]*\))?\s*:\s*(.+)$", stripped)
@@ -80,7 +80,7 @@ def _schema_from_function(func: Callable, arg_docs: Dict[str, str]) -> dict:
     try:
         from typing import get_type_hints
         hints = get_type_hints(func)
-    except Exception:                                             # annotations non résolubles : repli sur string
+    except Exception:                                             # unresolvable annotations: fall back to string
         pass
     props, required = {}, []
     for name, param in inspect.signature(func).parameters.items():
@@ -116,18 +116,18 @@ class ToolRegistry:
 
     def register(self, func: Optional[Callable] = None, *, name: Optional[str] = None,
                  description: Optional[str] = None, parameters: Optional[dict] = None, replace: bool = False):
-        """Décorateur : `@tool` ou `@tool(name=…, description=…, parameters=…)`. Sans `parameters`, le schéma
-        est déduit de la signature et de la docstring."""
+        """Decorator: `@tool` or `@tool(name=…, description=…, parameters=…)`. Without `parameters`, the schema
+        is inferred from the signature and the docstring."""
         def decorate(f: Callable) -> Callable:
             tool_name = name or f.__name__
             if not _NAME_RE.match(tool_name):
-                raise ValueError(f"Nom d'outil invalide : {tool_name!r} (lettres, chiffres, _ et - ; 64 caractères max)")
+                raise ValueError(f"Invalid tool name: {tool_name!r} (letters, digits, _ and - ; 64 characters max)")
             if tool_name in self._tools and not replace:
-                raise ValueError(f"Outil déjà enregistré : {tool_name!r} (utilisez replace=True pour le remplacer)")
+                raise ValueError(f"Tool already registered: {tool_name!r} (use replace=True to replace it)")
             doc_text, arg_docs = _split_doc(inspect.getdoc(f) or "")
             desc = description or doc_text
             if not desc:
-                raise ValueError(f"L'outil {tool_name!r} n'a pas de description : ajoutez une docstring ou description=…")
+                raise ValueError(f"Tool {tool_name!r} has no description: add a docstring or description=…")
             self._tools[tool_name] = Tool(tool_name, desc, parameters or _schema_from_function(f, arg_docs), f)
             return f
         return decorate(func) if func is not None else decorate
@@ -142,7 +142,7 @@ class ToolRegistry:
         return list(self._tools)
 
     def schemas(self) -> List[dict]:
-        """Liste à passer au paramètre `tools` de l'API (vide si aucun outil)."""
+        """List to pass as the API `tools` parameter (empty if there are no tools)."""
         return [t.schema() for t in self._tools.values()]
 
     def __len__(self) -> int:
@@ -152,19 +152,19 @@ class ToolRegistry:
         return name in self._tools
 
     def execute(self, name: str, raw_arguments: str) -> str:
-        """Exécute un outil à partir des arguments JSON du modèle ; retourne toujours une chaîne JSON.
-        Outil inconnu, arguments invalides ou exception de l'outil → {"error": …} renvoyé au modèle."""
+        """Runs a tool from the model's JSON arguments; always returns a JSON string.
+        Unknown tool, invalid arguments or tool exception → {"error": …} returned to the model."""
         tool = self._tools.get(name)
         if tool is None:
-            result: Any = {"error": f"Outil inconnu : {name}. Outils disponibles : {sorted(self._tools)}"}
+            result: Any = {"error": f"Unknown tool: {name}. Available tools: {sorted(self._tools)}"}
         else:
             try:
                 args = json.loads(raw_arguments) if raw_arguments else {}
                 if not isinstance(args, dict):
-                    raise ValueError("les arguments doivent être un objet JSON")
+                    raise ValueError("arguments must be a JSON object")
                 result = tool.func(**args)
             except Exception as e:
-                logger.warning("Outil %s en erreur : %s", name, e)
+                logger.warning("Tool %s failed: %s", name, e)
                 result = {"error": f"{type(e).__name__}: {e}"}
         return json.dumps(result, ensure_ascii=False, default=str)
 

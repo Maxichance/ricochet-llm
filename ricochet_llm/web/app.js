@@ -2,7 +2,7 @@
 (() => {
   const REFRESH_MS = 3000;
 
-  // ───────── DOM : tout est inséré en texte, aucune donnée n'est interprétée comme du HTML ─────────
+  // ───────── DOM: everything is inserted as text, no data is ever interpreted as HTML ─────────
   const $ = (sel, root = document) => root.querySelector(sel);
   function h(tag, props, ...kids) {
     const el = document.createElement(tag);
@@ -19,30 +19,30 @@
   }
   const shape = (kind, color) => h("i", { class: `shape ${kind}`, style: color ? `--c:${color}` : null });
 
-  // ───────── Formatage ─────────
-  const nf = new Intl.NumberFormat("fr-FR");
+  // ───────── Formatting ─────────
+  const nf = new Intl.NumberFormat("en-US");
   const fmt = (n) => (n == null ? "—" : nf.format(n));
-  const fmtMs = (ms) => (ms == null ? "—" : ms >= 1000 ? (ms / 1000).toFixed(1).replace(".", ",") + " s" : ms + " ms");
-  const fmtTok = (n) => (n >= 1e6 ? (n / 1e6).toFixed(1).replace(".", ",") + " M" : n >= 1e3 ? (n / 1e3).toFixed(1).replace(".", ",") + " k" : String(n));
+  const fmtMs = (ms) => (ms == null ? "—" : ms >= 1000 ? (ms / 1000).toFixed(1) + " s" : ms + " ms");
+  const fmtTok = (n) => (n >= 1e6 ? (n / 1e6).toFixed(1) + " M" : n >= 1e3 ? (n / 1e3).toFixed(1) + " k" : String(n));
   const fmtClock = (s) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
-  const fmtTime = (t) => new Date(t * 1000).toLocaleTimeString("fr-FR");
+  const fmtTime = (t) => new Date(t * 1000).toLocaleTimeString("en-GB");
 
   const STATUS = {
-    ok:       { label: "Disponible",       shape: "circle" },
-    unknown:  { label: "Prêt, non sondé",  shape: "hollow" },
-    limit:    { label: "Quota bas",        shape: "triangle" },
-    cooldown: { label: "En pause",         shape: "diamond" },
-    disabled: { label: "Clé absente",      shape: "ring" },
+    ok:       { label: "Available",       shape: "circle" },
+    unknown:  { label: "Ready, not probed", shape: "hollow" },
+    limit:    { label: "Low quota",       shape: "triangle" },
+    cooldown: { label: "Paused",          shape: "diamond" },
+    disabled: { label: "Key missing",     shape: "ring" },
   };
-  const KIND = {   // type d'événement → [forme, couleur, libellé court]
+  const KIND = {   // event kind → [shape, color, short label]
     ok:         ["circle", "var(--ink)", "ok"],
     rate_limit: ["diamond", "var(--warn)", "quota"],
-    transient:  ["triangle", "var(--warn)", "réseau"],
+    transient:  ["triangle", "var(--warn)", "network"],
     config:     ["cross", "var(--danger)", "config"],
-    payment:    ["cross", "var(--danger)", "offre"],
-    rejected:  ["triangle", "var(--warn)", "refusé"],
-    empty:      ["hollow", "var(--muted)", "vide"],
-    no_choices: ["diamond", "var(--warn)", "sans réponse"],
+    payment:    ["cross", "var(--danger)", "plan"],
+    rejected:  ["triangle", "var(--warn)", "rejected"],
+    empty:      ["hollow", "var(--muted)", "empty"],
+    no_choices: ["diamond", "var(--warn)", "no reply"],
     info:       ["ring", "var(--muted)", "info"],
   };
 
@@ -62,7 +62,7 @@
     toastTimer = setTimeout(() => { el.className = "toast"; }, 3600);
   }
 
-  // ───────── Résumé ─────────
+  // ───────── Summary ─────────
   function renderSummary(d) {
     const ps = d.order.map((n) => d.providers[n]).filter((p) => p.configured);
     const avail = ps.filter((p) => p.status !== "cooldown").length;
@@ -74,15 +74,15 @@
 
     const main = d.next.provider
       ? h("div", { class: "main" }, d.next.label, h("small", null, `${d.next.model} · ${d.next.mode}`))
-      : h("div", { class: "main bad", title: d.next.error || "" }, "Aucun provider disponible");
+      : h("div", { class: "main bad", title: d.next.error || "" }, "No provider available");
     $("#summary").replaceChildren(
-      h("div", null, h("span", { class: "label" }, "Prochain appel"), main),
+      h("div", null, h("span", { class: "label" }, "Next call"), main),
       h("dl", { class: "kpis" },
-        kpi("Actifs", `${avail} / ${ps.length}`), kpi("Latence moy.", fmtMs(lat)),
-        kpi("Appels", fmt(ok + err)), kpi("Erreurs", ok + err ? `${Math.round((err / (ok + err)) * 100)} %` : "—")));
+        kpi("Active", `${avail} / ${ps.length}`), kpi("Avg latency", fmtMs(lat)),
+        kpi("Calls", fmt(ok + err)), kpi("Errors", ok + err ? `${Math.round((err / (ok + err)) * 100)}%` : "—")));
   }
 
-  // ───────── Lignes providers ─────────
+  // ───────── Provider rows ─────────
   function mostConstrained(limits) {
     const usable = (limits || []).filter((l) => l.limit > 0 && l.remaining != null);
     if (!usable.length) return null;
@@ -96,7 +96,7 @@
     r.act = h("div", { class: "act" });
     r.detail = h("div", { class: "detail", hidden: true });
     r.kpis = h("dl", { class: "kpis" },
-      h("div", null, h("dt", null, "Latence"), r.lat), h("div", null, h("dt", null, "OK"), r.ok), h("div", null, h("dt", null, "Err."), r.err));
+      h("div", null, h("dt", null, "Latency"), r.lat), h("div", null, h("dt", null, "OK"), r.ok), h("div", null, h("dt", null, "Err."), r.err));
     r.line = h("div", { class: "line", role: "button", tabindex: "0", "aria-expanded": "false" },
       h("div", { class: "id" }, r.shape, h("div", { style: "min-width:0" }, r.name, r.state)),
       h("div", { class: "bar" }, h("div", { class: "track" }, r.fill), h("div", { class: "barlabel" }, r.barL, r.barR)),
@@ -116,27 +116,27 @@
 
   function detailContent(name, p) {
     if (!p.configured) {
-      return [h("p", null, "Ajoutez la clé dans ", h("b", null, ".env"), " : ", h("code", null, `${p.env_key}=…`)),
+      return [h("p", null, "Add the key to ", h("b", null, ".env"), ": ", h("code", null, `${p.env_key}=…`)),
         p.note ? h("p", null, p.note) : null,
-        p.console_url ? h("p", null, h("a", { href: p.console_url, target: "_blank", rel: "noopener noreferrer" }, "Obtenir une clé gratuite ↗")) : null];
+        p.console_url ? h("p", null, h("a", { href: p.console_url, target: "_blank", rel: "noopener noreferrer" }, "Get a free key ↗")) : null];
     }
     const item = (k, v) => (v == null ? null : h("div", null, h("dt", null, k), h("dd", null, v)));
     const exp = p.key_expires_at
-      ? `${p.key_expires_at} (${p.key_expires_in_days < 0 ? "expirée" : "dans " + p.key_expires_in_days + " j"})` : null;
+      ? `${p.key_expires_at} (${p.key_expires_in_days < 0 ? "expired" : "in " + p.key_expires_in_days + " d"})` : null;
     const soon = p.key_expires_in_days != null && p.key_expires_in_days <= 30;
     return [
       h("dl", { class: "grid" },
-        item("Modèle heavy", p.model_heavy), item("Modèle light", p.model_light),
-        item("Tokens consommés", p.stats.tokens ? fmt(p.stats.tokens) : null),
-        item("Appels / minute", fmt(p.stats.calls_last_minute)),
+        item("Heavy model", p.model_heavy), item("Light model", p.model_light),
+        item("Tokens used", p.stats.tokens ? fmt(p.stats.tokens) : null),
+        item("Calls / minute", fmt(p.stats.calls_last_minute)),
         (p.limits || []).map((l) => item(l.label, l.limit != null ? `${fmt(l.remaining)} / ${fmt(l.limit)}` : fmt(l.remaining))),
-        item("Clé · expiration", exp), item("Note", p.note)),
-      soon ? h("p", { class: "warnline" }, "La clé expire bientôt : pensez à la renouveler.") : null,
-      p.cooldown_s ? h("p", { class: "warnline" }, "Provider en pause : il sera retenté automatiquement.") : null,
+        item("Key · expiry", exp), item("Note", p.note)),
+      soon ? h("p", { class: "warnline" }, "The key expires soon: remember to renew it.") : null,
+      p.cooldown_s ? h("p", { class: "warnline" }, "Provider paused: it will be retried automatically.") : null,
       p.last_error ? h("p", { class: "alert" }, p.last_error) : null,
       h("div", { class: "acts" },
-        p.cooldown_s ? h("button", { class: "btn small", type: "button", onclick: () => resetProvider(name) }, "Reprendre maintenant") : null,
-        p.console_url ? h("a", { href: p.console_url, target: "_blank", rel: "noopener noreferrer" }, "Console du provider ↗") : null),
+        p.cooldown_s ? h("button", { class: "btn small", type: "button", onclick: () => resetProvider(name) }, "Resume now") : null,
+        p.console_url ? h("a", { href: p.console_url, target: "_blank", rel: "noopener noreferrer" }, "Provider console ↗") : null),
     ];
   }
 
@@ -161,15 +161,15 @@
         r.barR.textContent = `${fmt(lim.remaining)} / ${fmt(lim.limit)}`;
       } else {
         r.fill.style.width = "0%";
-        r.barL.textContent = "Quota non communiqué";
-        r.barR.textContent = `${p.stats.calls_last_minute} appel${p.stats.calls_last_minute > 1 ? "s" : ""}/min`;
+        r.barL.textContent = "Quota not reported";
+        r.barR.textContent = `${p.stats.calls_last_minute} call${p.stats.calls_last_minute > 1 ? "s" : ""}/min`;
       }
       r.lat.textContent = fmtMs(p.stats.avg_latency_ms);
       r.ok.textContent = fmt(p.stats.ok);
       r.err.textContent = fmt(p.stats.errors);
       r.kpis.style.visibility = "";
       if (!r.testBtn) {
-        r.testBtn = h("button", { class: "btn small", type: "button", onclick: (ev) => { ev.stopPropagation(); pingProvider(name, ev.currentTarget); } }, "Tester");
+        r.testBtn = h("button", { class: "btn small", type: "button", onclick: (ev) => { ev.stopPropagation(); pingProvider(name, ev.currentTarget); } }, "Test");
       }
       r.act.replaceChildren(r.testBtn);
     } else {
@@ -177,13 +177,13 @@
       r.barL.textContent = p.env_key;
       r.barR.textContent = "";
       r.kpis.style.visibility = "hidden";
-      r.act.replaceChildren(h("span", { class: "btn small", style: "visibility:hidden" }, "Tester"));
+      r.act.replaceChildren(h("span", { class: "btn small", style: "visibility:hidden" }, "Test"));
     }
 
     if (open.has(name)) {
       r.detail.hidden = false;
       r.line.setAttribute("aria-expanded", "true");
-      const content = detailContent(name, p).filter(Boolean);   // un null deviendrait le texte « null »
+      const content = detailContent(name, p).filter(Boolean);   // a null would become the text "null"
       const sig = JSON.stringify(p, (k, v) => (k === "stats" || k === "limits_age_s" ? undefined : v)) + p.stats.tokens + p.stats.calls_last_minute;
       if (r.sig !== sig) { r.detail.replaceChildren(...content); r.sig = sig; }
     }
@@ -193,7 +193,7 @@
   function tickRow(r) {
     if (!r.cooldownEnd) return;
     const left = Math.max(0, Math.ceil((r.cooldownEnd - Date.now()) / 1000));
-    r.state.textContent = left ? `${r.stateText} · reprise dans ${fmtClock(left)}` : `${r.stateText} · reprise imminente`;
+    r.state.textContent = left ? `${r.stateText} · resumes in ${fmtClock(left)}` : `${r.stateText} · resuming shortly`;
   }
 
   function renderRows(d) {
@@ -203,21 +203,21 @@
     if (key !== rowOrder) { $("#rows").replaceChildren(...d.order.map((n) => rows.get(n).el)); rowOrder = key; }
   }
 
-  // ───────── Journal ─────────
+  // ───────── Log ─────────
   function renderEvents(d) {
     const ul = $("#events");
-    if (!d.events.length) { ul.replaceChildren(h("li", { class: "none" }, "Aucun événement pour l'instant.")); return; }
+    if (!d.events.length) { ul.replaceChildren(h("li", { class: "none" }, "No events yet.")); return; }
     ul.replaceChildren(...d.events.map((e) => {
       const [kind, color] = KIND[e.kind] || KIND.info;
       return h("li", null, h("span", { class: "t num" }, fmtTime(e.t)), shape(kind, color), h("span", { class: "m" }, h("b", null, label(e.provider)), e.message));
     }));
   }
 
-  // ───────── Rafraîchissement ─────────
+  // ───────── Refresh ─────────
   function setLive(on) {
     $("#live").dataset.state = on ? "on" : "off";
     $("#live .shape").className = "shape " + (on ? "circle" : "cross");
-    if (!on) $("#live-text").textContent = "hors ligne";
+    if (!on) $("#live-text").textContent = "offline";
   }
   async function refresh() {
     if (inFlight) return;
@@ -242,7 +242,7 @@
     for (const r of rows.values()) tickRow(r);
     if (fetchedAt && $("#live").dataset.state === "on") {
       const s = Math.round((Date.now() - fetchedAt) / 1000);
-      $("#live-text").textContent = s < 2 ? "à jour" : `mis à jour il y a ${s} s`;
+      $("#live-text").textContent = s < 2 ? "up to date" : `updated ${s} s ago`;
     }
   }, 1000);
 
@@ -250,24 +250,24 @@
   async function post(url, body) {
     const res = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: body ? JSON.stringify(body) : null });
     let json = null;
-    try { json = await res.json(); } catch (e) { /* corps vide */ }
+    try { json = await res.json(); } catch (e) { /* empty body */ }
     return { ok: res.ok, json };
   }
   async function pingProvider(name, btn) {
-    btn.disabled = true; btn.textContent = "Test…";
+    btn.disabled = true; btn.textContent = "Testing…";
     try {
       const { json } = await post(`/api/providers/${encodeURIComponent(name)}/ping`);
-      if (json && json.ok) toast(`${label(name)} répond en ${fmtMs(json.latency_ms)}`);
-      else toast(`${label(name)} : échec${json && json.error ? " — " + json.error : ""}`.slice(0, 220), true);
+      if (json && json.ok) toast(`${label(name)} answered in ${fmtMs(json.latency_ms)}`);
+      else toast(`${label(name)}: failed${json && json.error ? " — " + json.error : ""}`.slice(0, 220), true);
     } catch (e) {
-      toast(`${label(name)} : serveur injoignable`, true);
+      toast(`${label(name)}: server unreachable`, true);
     }
-    btn.disabled = false; btn.textContent = "Tester";
+    btn.disabled = false; btn.textContent = "Test";
     await refresh();
   }
   async function resetProvider(name) {
     await post(`/api/providers/${encodeURIComponent(name)}/reset`);
-    toast(`${label(name)} réactivé : il sera retenté au prochain appel`);
+    toast(`${label(name)} re-enabled: it will be retried on the next call`);
     await refresh();
   }
 
@@ -276,7 +276,7 @@
   let sessionId = newId(), sending = false;
   const msgs = $("#msgs");
 
-  const showHint = () => msgs.replaceChildren(h("p", { class: "hint" }, "Posez une question : la réponse indique quel provider a répondu, et les bascules éventuelles."));
+  const showHint = () => msgs.replaceChildren(h("p", { class: "hint" }, "Ask a question: the reply shows which provider answered, and any fallbacks."));
   function addMessage(role, text, extra) {
     const hint = $(".hint", msgs);
     if (hint) hint.remove();
@@ -292,21 +292,21 @@
       parts.push(h("span", { class: "chip", title: t.detail || "" }, shape(kind, color), `${label(t.provider)} · ${short}`), "→");
     }
     parts.push(h("span", { class: "chip", title: m.model }, shape("circle", "var(--ink)"), `${label(m.provider)} · ${m.model.split("/").pop()}`));
-    parts.push(h("span", null, `${m.mode} · ${fmtMs(m.latency_ms)}${m.tool_rounds ? ` · ${m.tool_rounds} outil${m.tool_rounds > 1 ? "s" : ""}` : ""}`));
+    parts.push(h("span", null, `${m.mode} · ${fmtMs(m.latency_ms)}${m.tool_rounds ? ` · ${m.tool_rounds} tool${m.tool_rounds > 1 ? "s" : ""}` : ""}`));
     return h("div", { class: "meta" }, parts);
   }
   async function send(text) {
     sending = true; $("#send").disabled = true;
     addMessage("user", text);
-    const pending = addMessage("assistant pending", "Routage en cours…");
+    const pending = addMessage("assistant pending", "Routing…");
     try {
       const { ok, json } = await post("/api/chat", { session_id: sessionId, message: text });
       pending.remove();
       if (ok && json && json.status === "ok") addMessage("assistant", json.response, metaFor(json.meta));
-      else addMessage("error", (json && json.response) || "Erreur inconnue");
+      else addMessage("error", (json && json.response) || "Unknown error");
     } catch (e) {
       pending.remove();
-      addMessage("error", "Serveur injoignable.");
+      addMessage("error", "Server unreachable.");
     }
     sending = false; $("#send").disabled = false; $("#input").focus();
     refresh();
@@ -322,7 +322,7 @@
     if (ev.key === "Enter" && !ev.shiftKey && !ev.isComposing) { ev.preventDefault(); $("#composer").requestSubmit(); }
   });
   $("#new-chat").addEventListener("click", async () => {
-    try { await post("/api/reset", { session_id: sessionId }); } catch (e) { /* hors ligne : on repart quand même */ }
+    try { await post("/api/reset", { session_id: sessionId }); } catch (e) { /* offline: start over anyway */ }
     sessionId = newId();
     showHint();
   });

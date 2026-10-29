@@ -1,34 +1,34 @@
-# Contribuer
+# Contributing
 
-Le projet est collaboratif : tout le monde peut le faire évoluer, y compris en profondeur. Nouveaux providers, nouveaux modèles, autres formats d'API, autres stratégies de routage, correctifs, tests, documentation : proposez, on en discute.
+The project is collaborative: anyone can take it further, including in depth. New providers, new models, other API formats, other routing strategies, fixes, tests, documentation: propose it and we'll talk.
 
-## Proposer une modification
+## Proposing a change
 
-1. Faites un fork du dépôt, puis créez une branche.
-2. Installez le projet : `pip install -e ".[dev]" ruff`.
-3. Avant d'ouvrir la pull request :
+1. Fork the repository, then create a branch.
+2. Install the project: `pip install -e ".[dev]" ruff`.
+3. Before opening the pull request:
    ```
    ruff check .
    python -m unittest discover -s tests -v
    ```
-4. Ouvrez une pull request vers `main`.
+4. Open a pull request against `main`.
 
-Pour un changement important, une issue au préalable permet d'en parler avant d'écrire le code, mais ce n'est pas obligatoire.
+For a large change, an issue beforehand lets you discuss it before writing the code, but it isn't required.
 
-## Providers et modèles
+## Providers and models
 
-- **Pour votre usage** : un fichier `providers.json` suffit, sans modifier le code (voir `providers.example.json` et [docs/GUIDE.md](docs/GUIDE.md), section 3).
-- **Pour le partager** : ajoutez-le à `ricochet_llm/catalog.py`, ou changez les chaînes de modèles existantes.
-- **Une API qui n'est pas compatible OpenAI** est la bienvenue aussi : le routeur parle aujourd'hui ce format, un adaptateur pour un autre format est un bon sujet de contribution.
+- **For your own use**: a `providers.json` file is enough, with no code change (see `providers.example.json` and [docs/GUIDE.md](docs/GUIDE.md), section 3).
+- **To share it**: add it to `ricochet_llm/catalog.py`, or change the existing model chains.
+- **An API that isn't OpenAI-compatible** is welcome too: the router speaks that format today, and an adapter for another format is a good contribution.
 
-Un conseil : testez par un vrai appel avant de proposer (`python -m ricochet_llm models <provider>`), la liste `/models` d'un provider n'étant pas toujours fiable. Et vérifiez que les conditions d'utilisation de l'offre gratuite permettent cet usage.
+A tip: test with a real call before proposing (`python -m ricochet_llm models <provider>`), as a provider's `/models` list isn't always reliable. Also check that the free tier's terms of use allow this usage.
 
-## À respecter
+## Ground rules
 
-- Tout ce qui est commité est public : **aucune clé, aucun `.env`, aucune donnée personnelle**.
-- La CI doit passer (Python 3.9 et 3.12).
-- Les failles de sécurité ne se signalent pas dans une issue publique : voir [SECURITY.md](SECURITY.md).
+- Everything committed is public: **no keys, no `.env`, no personal data**.
+- CI must pass (Python 3.9 and 3.12).
+- Report security vulnerabilities privately, not in a public issue: see [SECURITY.md](SECURITY.md).
 
-## Licence
+## License
 
-En contribuant, vous acceptez que votre code soit publié sous la licence [MIT](LICENSE) du projet.
+By contributing, you agree that your code is published under the project's [MIT](LICENSE) license.
