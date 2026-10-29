@@ -8,8 +8,8 @@ from pathlib import Path
 from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from ricochet import catalog  # noqa: E402
-from ricochet.catalog import ConfigError, load_specs  # noqa: E402
+from ricochet_llm import catalog  # noqa: E402
+from ricochet_llm.catalog import ConfigError, load_specs  # noqa: E402
 
 
 class CatalogTests(unittest.TestCase):

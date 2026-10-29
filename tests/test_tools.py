@@ -9,8 +9,8 @@ from pathlib import Path
 from typing import List, Literal, Optional
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from ricochet import plugins  # noqa: E402
-from ricochet.tools import ToolRegistry  # noqa: E402
+from ricochet_llm import plugins  # noqa: E402
+from ricochet_llm.tools import ToolRegistry  # noqa: E402
 
 
 class SchemaTests(unittest.TestCase):

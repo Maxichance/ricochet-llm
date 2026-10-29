@@ -1,6 +1,6 @@
 """
 Serveur web local : tableau de bord (statut + quota de chaque provider), console de chat et API JSON.
-Lancer :  python -m ricochet serve        puis ouvrir http://127.0.0.1:8765
+Lancer :  python -m ricochet_llm serve        puis ouvrir http://127.0.0.1:8765
 Écoute en local uniquement par défaut : les actions (chat, test, reprise) consomment des quotas.
 """
 import logging

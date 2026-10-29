@@ -1,7 +1,7 @@
 """
 Registre d'outils (tool calling) : décrire une fonction Python suffit, le schéma JSON est déduit de sa signature.
 
-    from ricochet import tool
+    from ricochet_llm import tool
 
     @tool
     def rechercher_client(email: str) -> dict:

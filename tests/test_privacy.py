@@ -8,8 +8,8 @@ import sys
 import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from ricochet import privacy  # noqa: E402
-from ricochet.privacy import check_conversation, find_personal_data  # noqa: E402
+from ricochet_llm import privacy  # noqa: E402
+from ricochet_llm.privacy import check_conversation, find_personal_data  # noqa: E402
 
 
 def _security_key(base13: str) -> str:

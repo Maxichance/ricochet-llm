@@ -1,11 +1,11 @@
 """
 Ligne de commande :
-  python -m ricochet                 → serveur web + tableau de bord (défaut)
-  python -m ricochet serve --port N  → idem, port choisi
-  python -m ricochet status          → état des providers dans le terminal
-  python -m ricochet chat "bonjour"  → une question, une réponse
-  python -m ricochet models nvidia   → quels modèles listés par le provider répondent VRAIMENT (diagnostic)
-  python -m ricochet search "requête" → recherche Web par API gratuite (Exa, Tavily, LangSearch), quota suivi
+  python -m ricochet_llm                 → serveur web + tableau de bord (défaut)
+  python -m ricochet_llm serve --port N  → idem, port choisi
+  python -m ricochet_llm status          → état des providers dans le terminal
+  python -m ricochet_llm chat "bonjour"  → une question, une réponse
+  python -m ricochet_llm models nvidia   → quels modèles listés par le provider répondent VRAIMENT (diagnostic)
+  python -m ricochet_llm search "requête" → recherche Web par API gratuite (Exa, Tavily, LangSearch), quota suivi
 """
 import argparse
 import logging
@@ -55,9 +55,13 @@ _LOCAL_HOSTS = ("127.0.0.1", "localhost", "::1")
 
 
 def _serve(host: str, port: int, open_browser: bool, allow_remote: bool) -> int:
-    import uvicorn
+    try:
+        import uvicorn
 
-    from .server import create_app
+        from .server import create_app
+    except ImportError:
+        print("Le tableau de bord demande des dépendances en plus : pip install \"ricochet-llm[server]\"", file=sys.stderr)
+        return 1
 
     if host not in _LOCAL_HOSTS and not allow_remote:
         print(f"Refusé : écouter sur {host} expose le tableau de bord (sans authentification) au réseau.\n"
@@ -78,7 +82,7 @@ def main(argv=None) -> int:
         except Exception:
             pass
 
-    parser = argparse.ArgumentParser(prog="ricochet", description=__doc__,
+    parser = argparse.ArgumentParser(prog="ricochet-llm", description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("-v", "--verbose", action="store_true", help="logs détaillés")
     sub = parser.add_subparsers(dest="cmd")

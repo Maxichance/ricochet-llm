@@ -38,15 +38,15 @@ Une boucle agentique (chat + tool calling) qui ne dépend d'aucun fournisseur LL
 
 ## 3. Ajouter ou modifier un provider
 
-Sans toucher au code : `providers.json` (voir `providers.example.json` et la docstring de `catalog.py`) — surcharge un provider, en retire un, en ajoute un, change l'ordre. Le fichier est validé au chargement (`ConfigError` explicite). Pour un provider livré avec le paquet, ajouter une entrée à `BUILTIN_SPECS`. **Avant de choisir un modèle, le tester par un vrai appel** (voir pièges). Sans en-tête de quota, laisser `quota_header` à `null` : seuls les 429 déclencheront alors le cooldown. Lancer `python -m ricochet models <provider>` : **la liste d'un provider gratuit ne dit pas ce qui répond**. Pour un modèle qui raisonne, renseigner `model_options` (couper le raisonnement) ; pour un provider à budget par modèle, `token_limits` ; pour un provider à débit limité, `max_concurrency` et `min_interval_s`. Pour une sonde dédiée, ajouter une fonction dans `_PROBES` (`router.py`).
+Sans toucher au code : `providers.json` (voir `providers.example.json` et la docstring de `catalog.py`) — surcharge un provider, en retire un, en ajoute un, change l'ordre. Le fichier est validé au chargement (`ConfigError` explicite). Pour un provider livré avec le paquet, ajouter une entrée à `BUILTIN_SPECS`. **Avant de choisir un modèle, le tester par un vrai appel** (voir pièges). Sans en-tête de quota, laisser `quota_header` à `null` : seuls les 429 déclencheront alors le cooldown. Lancer `python -m ricochet_llm models <provider>` : **la liste d'un provider gratuit ne dit pas ce qui répond**. Pour un modèle qui raisonne, renseigner `model_options` (couper le raisonnement) ; pour un provider à budget par modèle, `token_limits` ; pour un provider à débit limité, `max_concurrency` et `min_interval_s`. Pour une sonde dédiée, ajouter une fonction dans `_PROBES` (`router.py`).
 
 ## 4. Intégrer dans un autre projet
 
-`pip install -e .` puis `from ricochet import chat, tool, set_system_prompt`. Déclarez vos outils avec `@tool` (schéma déduit de la signature et de la docstring). Le client `openai` est synchrone : dans une application asynchrone, appelez `chat` via `run_in_threadpool` / `run_in_executor` (comme `server.py`). Les sessions du serveur sont en mémoire (suffisant pour un outil interne mono-instance ; sur plusieurs instances, prévoir Redis/Firestore). Ne pas envoyer deux messages en parallèle sur la même session (le serveur renvoie 409). Sans outil enregistré, aucun paramètre `tools` n'est envoyé aux providers.
+`pip install -e .` puis `from ricochet_llm import chat, tool, set_system_prompt`. Déclarez vos outils avec `@tool` (schéma déduit de la signature et de la docstring). Le client `openai` est synchrone : dans une application asynchrone, appelez `chat` via `run_in_threadpool` / `run_in_executor` (comme `server.py`). Les sessions du serveur sont en mémoire (suffisant pour un outil interne mono-instance ; sur plusieurs instances, prévoir Redis/Firestore). Ne pas envoyer deux messages en parallèle sur la même session (le serveur renvoie 409). Sans outil enregistré, aucun paramètre `tools` n'est envoyé aux providers.
 
 ## 5. Comportements des providers à connaître
 
-Les offres gratuites changent vite (modèles retirés, limites modifiées) : **testez un modèle par un vrai appel avant de le configurer** (`python -m ricochet models <provider>`), la liste `/models` d'un provider n'est pas fiable.
+Les offres gratuites changent vite (modèles retirés, limites modifiées) : **testez un modèle par un vrai appel avant de le configurer** (`python -m ricochet_llm models <provider>`), la liste `/models` d'un provider n'est pas fiable.
 
 **Refus et pauses**
 - **Quel refus dit quoi** : un **402** ou une limite par minute à zéro (`x-ratelimit-limit-req-minute = 0`) = offre non activée, pause d'une heure. Un **429 sur un plafond journalier** (Gemini `GenerateRequestsPerDayPerProjectPerModel`, Cloudflare « daily free allocation », OpenRouter `free-models-per-day`) ne revient pas avant des heures : le retenter chaque minute ne ferait que perdre un appel. Un **429 sans `Retry-After`** mais avec `x-ratelimit-reset-tokens` (« 46.5s », « 1m30s ») : on attend la remise à zéro annoncée.
@@ -66,7 +66,7 @@ Les offres gratuites changent vite (modèles retirés, limites modifiées) : **t
 
 **Ordre par défaut** : Groq, NVIDIA, Ollama, Cloudflare, OpenRouter, Gonka (6 requêtes/min et 1 M de jetons par mois : dernier des gratuits), Gemini, Mistral. `RICOCHET_ORDER=groq,gemini` change la tête de liste sans fichier.
 
-**Confidentialité** : plusieurs offres gratuites journalisent ou utilisent les prompts pour entraîner leurs modèles. N'y envoyez pas de données personnelles sans avoir vérifié leurs conditions (`ricochet.privacy` repère les plus évidentes).
+**Confidentialité** : plusieurs offres gratuites journalisent ou utilisent les prompts pour entraîner leurs modèles. N'y envoyez pas de données personnelles sans avoir vérifié leurs conditions (`ricochet_llm.privacy` repère les plus évidentes).
 
 ## 5 bis. Bonnes pratiques de la lecture par lot
 
@@ -86,7 +86,7 @@ Les offres gratuites changent vite (modèles retirés, limites modifiées) : **t
 ## 6. Lectures par lot : `generate` et `run_parallel`
 
 ```python
-from ricochet import generate, run_parallel
+from ricochet_llm import generate, run_parallel
 
 def lire(document, provider):                      # exécutée dans un thread
     r = generate(prompt(document), system=CONSIGNE, max_tokens=8192, timeout=60, prefer=provider)
@@ -110,9 +110,9 @@ Certains modèles écrivent leur réponse deux fois (l'objet complet, un guillem
 ## 7. Checklist
 
 1. `pip install -r requirements.txt`, créer `.env` depuis `.env.example`, renseigner au moins une clé.
-2. Lancer `python -m ricochet serve --open`, cliquer **Tester** sur chaque carte : clé valide et latence correcte ?
+2. Lancer `python -m ricochet_llm serve --open`, cliquer **Tester** sur chaque carte : clé valide et latence correcte ?
 3. Déclarer vos outils (`@tool`) dans un plugin (`RICOCHET_PLUGIN`) ou dans votre code.
 4. `python -m unittest discover -s tests -v` après toute modification du moteur.
-5. Avant tout traitement par lot : `python -m ricochet models <provider>` (modèles réellement appelables), une tranche de ~100 éléments, un bilan par provider ET par modèle.
-6. Avant d'envoyer un texte saisi par un utilisateur à un free tier : `find_personal_data(texte)`. Pour la recherche Web : `python -m ricochet search "test"` avec une vraie clé (les adaptateurs n'ont été testés que contre des réponses simulées).
+5. Avant tout traitement par lot : `python -m ricochet_llm models <provider>` (modèles réellement appelables), une tranche de ~100 éléments, un bilan par provider ET par modèle.
+6. Avant d'envoyer un texte saisi par un utilisateur à un free tier : `find_personal_data(texte)`. Pour la recherche Web : `python -m ricochet_llm search "test"` avec une vraie clé (les adaptateurs n'ont été testés que contre des réponses simulées).
 7. Tester la bascule en réel : mettre un `quota_min` très haut sur le premier provider (`catalog.py`) et vérifier dans le journal que le suivant prend le relais.

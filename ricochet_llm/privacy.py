@@ -5,7 +5,7 @@ Les providers gratuits sont hors de l'Europe pour la plupart, et plusieurs peuve
 (voir la colonne « note » du catalogue). Demander aux utilisateurs de ne rien saisir de personnel ne les en empêche pas :
 ce module est le filet. Adresse e-mail, téléphone (France), IBAN, carte bancaire, numéro de sécurité sociale.
 
-    from ricochet import find_personal_data, chat_detailed
+    from ricochet_llm import find_personal_data, chat_detailed
 
     found = find_personal_data(message)
     if found:

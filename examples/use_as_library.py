@@ -1,7 +1,7 @@
 """Utiliser le routeur comme une bibliothèque, sans serveur ni interface."""
 import logging
 
-from ricochet import chat_detailed, quota_status, tool
+from ricochet_llm import chat_detailed, quota_status, tool
 
 logging.basicConfig(level=logging.INFO)
 

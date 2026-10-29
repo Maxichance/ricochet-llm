@@ -1,14 +1,14 @@
 # Recherche Web par API gratuite pour les agents du routeur
 
 Les modèles du routeur ne savent pas chercher sur le Web : ils n'appellent que les outils que l'application leur donne.
-`ricochet/search.py` fournit cet outil avec la même logique que `router.py` : plusieurs providers derrière une seule
+`ricochet_llm/search.py` fournit cet outil avec la même logique que `router.py` : plusieurs providers derrière une seule
 interface, bascule sur un refus, état consultable sans appel réseau.
 
 Ce que rend une recherche, ce sont des **pages**, jamais une réponse d'IA. Un agent qui s'en sert produit une simulation :
 elle ne mesure pas ce que répond un assistant grand public.
 
 ```python
-from ricochet import web_search, register_search_tool       # web_search = ricochet.search.search
+from ricochet_llm import web_search, register_search_tool       # web_search = ricochet_llm.search.search
 
 r = web_search("comparatif des routeurs LLM gratuits", n=5, content=True)
 r.status                                                    # SUCCESS | EMPTY | BLOCKED | RATE_LIMITED | ERROR (ne lève jamais)
@@ -17,7 +17,7 @@ r.status                                                    # SUCCESS | EMPTY | 
 register_search_tool()      # l'outil `search_web(query)` devient appelable par les modèles de chat()
 ```
 
-En ligne de commande : `python -m ricochet search "requête" [-n 6] [--content]`. `python -m ricochet status` affiche aussi la
+En ligne de commande : `python -m ricochet_llm search "requête" [-n 6] [--content]`. `python -m ricochet_llm status` affiche aussi la
 consommation de chaque moteur configuré, et le serveur la donne à `GET /api/search/status` (aucune clé dans la réponse).
 
 ## Providers retenus, écartés, et pourquoi

@@ -12,8 +12,8 @@ from unittest import mock
 import openai
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from ricochet import router as r  # noqa: E402
-from ricochet.tools import registry  # noqa: E402
+from ricochet_llm import router as r  # noqa: E402
+from ricochet_llm.tools import registry  # noqa: E402
 
 # ---------- fabrique de faux providers ----------
 

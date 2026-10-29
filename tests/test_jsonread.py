@@ -11,7 +11,7 @@ import sys
 import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from ricochet import read_json  # noqa: E402
+from ricochet_llm import read_json  # noqa: E402
 
 OBJECT = {"items": [{"label": "valeur A", "quote": "valeur A", "max": 10}],
           "meta": {"kind": "report", "cta": "Voir la suite"}}

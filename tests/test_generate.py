@@ -18,7 +18,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import openai  # noqa: E402
 from test_router import RouterTestCase, _make_error, err_429, err_status, fake  # noqa: E402
 
-from ricochet import router as r  # noqa: E402
+from ricochet_llm import router as r  # noqa: E402
 
 THINKING_OFF = {"extra_body": {"chat_template_kwargs": {"enable_thinking": False}}}
 

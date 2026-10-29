@@ -24,7 +24,7 @@ from .router import (
     set_system_prompt,
 )
 from .search import register_search_tool
-from .search import search as web_search  # `ricochet.search` reste le module (statut, compteurs)
+from .search import search as web_search  # `ricochet_llm.search` reste le module (statut, compteurs)
 from .tools import registry, tool
 
 __version__ = "0.5.0"

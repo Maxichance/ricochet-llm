@@ -1,7 +1,7 @@
 """
 Lecture tolérante de la réponse JSON d'un modèle : fonction pure, aucun état.
 
-    from ricochet import generate, read_json
+    from ricochet_llm import generate, read_json
 
     r = generate(prompt, max_tokens=8192)
     data = read_json(r.text)          # dict, ou None si la réponse est vraiment illisible

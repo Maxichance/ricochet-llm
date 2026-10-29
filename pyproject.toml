@@ -23,25 +23,24 @@ dependencies = [
     "openai>=1.0.0",
     "httpx",
     "python-dotenv",
-    "fastapi",
-    "uvicorn",
 ]
 
 [project.optional-dependencies]
-dev = ["httpx"]
+server = ["fastapi", "uvicorn"]          # tableau de bord web : pip install ricochet-llm[server]
+dev = ["httpx", "fastapi", "uvicorn"]
 
 [project.urls]
 Homepage = "https://github.com/Maxichance/ricochet-llm"
 Issues = "https://github.com/Maxichance/ricochet-llm/issues"
 
 [project.scripts]
-ricochet = "ricochet.__main__:main"
+ricochet-llm = "ricochet_llm.__main__:main"
 
 [tool.setuptools]
-packages = ["ricochet"]
+packages = ["ricochet_llm"]
 
 [tool.setuptools.package-data]
-ricochet = ["web/*"]
+ricochet_llm = ["web/*"]
 
 [tool.ruff]
 line-length = 120

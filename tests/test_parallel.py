@@ -15,8 +15,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from test_generate import answer, multi  # noqa: E402
 from test_router import RouterTestCase  # noqa: E402
 
-from ricochet import router as r  # noqa: E402
-from ricochet.parallel import Interrupted, parse_limits, run_parallel  # noqa: E402
+from ricochet_llm import router as r  # noqa: E402
+from ricochet_llm.parallel import Interrupted, parse_limits, run_parallel  # noqa: E402
 
 
 def providers(**conc):

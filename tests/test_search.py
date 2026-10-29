@@ -14,8 +14,8 @@ from unittest import mock
 import httpx
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from ricochet import search as sr  # noqa: E402
-from ricochet.tools import registry  # noqa: E402
+from ricochet_llm import search as sr  # noqa: E402
+from ricochet_llm.tools import registry  # noqa: E402
 
 EXA = {"requestId": "r", "results": [
     {"title": "Guide des routeurs", "url": "https://exemple.org/guide",

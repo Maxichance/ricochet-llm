@@ -7,21 +7,25 @@ Un routeur qui répartit vos requêtes entre plusieurs API LLM **gratuites** (Gr
 
 ## Démarrage
 
+Depuis PyPI : `pip install ricochet-llm` (bibliothèque et CLI) ou `pip install "ricochet-llm[server]"` (avec le tableau de bord). Le module s'importe sous le nom `ricochet_llm`, la commande s'appelle `ricochet-llm`.
+
+Depuis les sources :
+
 ```bash
 git clone https://github.com/Maxichance/ricochet-llm.git && cd ricochet-llm
-pip install -e .                  # ou : pip install -r requirements.txt
+pip install -e ".[server]"         # sans le tableau de bord : pip install -e .
 cp .env.example .env              # Windows : copy .env.example .env ; renseignez au moins une clé (voir plus bas)
-python -m ricochet serve --open
+python -m ricochet_llm serve --open
 ```
 
 Le tableau de bord s'ouvre sur **http://127.0.0.1:8765**. Il écoute uniquement sur votre machine : l'écoute sur une autre adresse est refusée sans `--allow-remote`, car l'interface n'a pas d'authentification et ses boutons consomment des quotas.
 
 | Commande | Effet |
 |---|---|
-| `python -m ricochet serve [--port N] [--open]` | serveur web + tableau de bord (commande par défaut) |
-| `python -m ricochet status` | état des providers dans le terminal |
-| `python -m ricochet chat "bonjour"` | une question, une réponse (+ provider utilisé) |
-| `python -m ricochet models nvidia` | **quels modèles listés répondent vraiment** (la liste d'un provider gratuit ne le dit pas) |
+| `python -m ricochet_llm serve [--port N] [--open]` | serveur web + tableau de bord (commande par défaut) |
+| `python -m ricochet_llm status` | état des providers dans le terminal |
+| `python -m ricochet_llm chat "bonjour"` | une question, une réponse (+ provider utilisé) |
+| `python -m ricochet_llm models nvidia` | **quels modèles listés répondent vraiment** (la liste d'un provider gratuit ne le dit pas) |
 
 ## Le tableau de bord
 
@@ -32,7 +36,7 @@ Les quotas ne sont affichés que quand le provider les communique (en-têtes `x-
 ## Utiliser le routeur dans votre code
 
 ```python
-from ricochet import chat_detailed, tool
+from ricochet_llm import chat_detailed, tool
 
 @tool
 def rechercher_client(email: str) -> dict:
@@ -55,7 +59,7 @@ Le schéma JSON de l'outil est déduit de la signature et de la docstring. Les e
 ## Traiter un lot : plusieurs appels à la fois
 
 ```python
-from ricochet import generate, run_parallel
+from ricochet_llm import generate, run_parallel
 
 def lire(document, provider):                       # exécutée dans un thread
     r = generate(prompt(document), max_tokens=8192, timeout=60, prefer=provider)
@@ -69,7 +73,7 @@ bilan = run_parallel(documents, lire, limits={"nvidia": 10})   # {"processed", "
 ## Chercher sur le Web, lire un JSON imparfait, filtrer les données personnelles
 
 ```python
-from ricochet import web_search, register_search_tool, read_json, find_personal_data
+from ricochet_llm import web_search, register_search_tool, read_json, find_personal_data
 
 register_search_tool()                                 # l'outil `search_web` devient appelable par les modèles de chat()
 pages = web_search("routeur llm gratuit", n=5, content=True).results     # Exa, Tavily, LangSearch : gratuits, quota suivi
@@ -83,12 +87,12 @@ La recherche s'arrête à 90 % du quota gratuit de chaque moteur et bascule sur 
 
 ## Configurer les providers sans toucher au code
 
-Copiez `providers.example.json` en `providers.json` (ou pointez dessus avec `RICOCHET_PROVIDERS`) pour modifier un modèle, retirer un provider, en ajouter un (tout endpoint compatible OpenAI) ou changer l'ordre de priorité (ou `RICOCHET_ORDER=groq,gemini` dans `.env`, sans fichier). Le fichier est validé : une faute de frappe donne une erreur explicite. Tous les champs sont documentés en tête de `ricochet/catalog.py`.
+Copiez `providers.example.json` en `providers.json` (ou pointez dessus avec `RICOCHET_PROVIDERS`) pour modifier un modèle, retirer un provider, en ajouter un (tout endpoint compatible OpenAI) ou changer l'ordre de priorité (ou `RICOCHET_ORDER=groq,gemini` dans `.env`, sans fichier). Le fichier est validé : une faute de frappe donne une erreur explicite. Tous les champs sont documentés en tête de `ricochet_llm/catalog.py`.
 
 ## Structure
 
 ```
-ricochet/
+ricochet_llm/
   catalog.py     providers intégrés + chargement/validation de providers.json
   router.py      moteur : choix du provider et du modèle, bascule, état par modèle, `chat`, `generate`, `probe_models`
   parallel.py    exécuteur parallèle de traitements par lot (plafonds et écarts par provider)

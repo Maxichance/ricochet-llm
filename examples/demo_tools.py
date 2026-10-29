@@ -3,13 +3,13 @@ Exemple de plugin : des outils + un prompt système, sans toucher au paquet.
 
     # PowerShell
     $env:RICOCHET_PLUGIN = "examples/demo_tools.py"
-    python -m ricochet serve --open
+    python -m ricochet_llm serve --open
 
 Puis demandez dans la console : « Quelle heure est-il ? » ou « Combien font 17 * 23 ? ».
 """
 from datetime import datetime, timezone
 
-from ricochet import set_system_prompt, tool
+from ricochet_llm import set_system_prompt, tool
 
 set_system_prompt("Tu es un assistant concis. Tu réponds en français et tu utilises les outils quand ils aident.")
 

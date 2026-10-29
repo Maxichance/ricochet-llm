@@ -13,7 +13,7 @@ import openai  # noqa: E402
 from test_router import RouterTestCase, err_429, err_status, fake, reply  # noqa: E402
 
 if TestClient is not None:
-    from ricochet.server import create_app
+    from ricochet_llm.server import create_app
 
 
 @unittest.skipIf(TestClient is None, "httpx requis pour fastapi.testclient")

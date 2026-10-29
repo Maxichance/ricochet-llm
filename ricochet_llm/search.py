@@ -2,7 +2,7 @@
 Recherche Web par API gratuite, pour tout agent du routeur : les modèles ne savent pas chercher, ils n'appellent que les
 outils que l'application leur donne. Cette brique fournit cet outil, avec la logique du routeur de modèles.
 
-    from ricochet import web_search, register_search_tool       # web_search = ricochet.search.search
+    from ricochet_llm import web_search, register_search_tool       # web_search = ricochet_llm.search.search
 
     r = web_search("comparatif des routeurs LLM gratuits", n=5, content=True)   # ne lève jamais : `r.status` dit ce qui s'est passé
     for page in r.results:                                        # {"title", "url", "snippet", "content" (si fourni)}

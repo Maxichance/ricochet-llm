@@ -82,7 +82,7 @@ BUILTIN_SPECS = [
         "label":          "NVIDIA NIM",
         "env_key":        "NVIDIANIM_API_KEY",
         "base_url":       "https://integrate.api.nvidia.com/v1",
-        # Le catalogue annonce beaucoup plus de modèles que ceux qui répondent avec une clé d'essai (`python -m ricochet
+        # Le catalogue annonce beaucoup plus de modèles que ceux qui répondent avec une clé d'essai (`python -m ricochet_llm
         # models nvidia` donne la liste réelle). Les Nemotron RAISONNENT : sans consigne contraire ils dépensent tout
         # `max_tokens` dans `reasoning_content` et rendent un `content` vide. `enable_thinking: false` les fait répondre
         # directement. Ordre : le plus capable d'abord, le petit modèle en dernier repli.

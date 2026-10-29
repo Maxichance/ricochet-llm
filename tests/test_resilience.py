@@ -20,8 +20,8 @@ import openai  # noqa: E402
 from test_generate import answer, by_model, multi  # noqa: E402
 from test_router import RouterTestCase, _make_error, fake, reply  # noqa: E402
 
-from ricochet import cleaning  # noqa: E402
-from ricochet import router as r  # noqa: E402
+from ricochet_llm import cleaning  # noqa: E402
+from ricochet_llm import router as r  # noqa: E402
 
 
 def err_402():
@@ -166,14 +166,14 @@ class OrderEnvTests(unittest.TestCase):
     def test_ricochet_order_moves_providers_first_and_ignores_unknown_names(self):
         from unittest import mock
 
-        from ricochet import catalog
+        from ricochet_llm import catalog
         with mock.patch.dict(os.environ, {catalog.ORDER_ENV_VAR: "gemini, nimporte-quoi ,groq"}):
             names = [s["name"] for s in catalog.load_specs()]
         self.assertEqual(names[:2], ["gemini", "groq"])
         self.assertEqual(len(names), len(set(names)))
 
     def test_default_order_puts_gonka_after_openrouter(self):
-        from ricochet import catalog
+        from ricochet_llm import catalog
         names = [s["name"] for s in catalog.BUILTIN_SPECS]
         self.assertLess(names.index("openrouter"), names.index("gonka"))      # 6 requêtes/min et 1 M de jetons PAR MOIS
         self.assertEqual(names[:4], ["groq", "nvidia", "ollama", "cloudflare"])

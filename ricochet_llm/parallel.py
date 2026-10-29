@@ -4,7 +4,7 @@ Exécuteur parallèle : plusieurs appels à la fois, répartis entre les provide
 Pour les traitements par lot (lire des milliers de documents, classer, extraire) où la cascade « un provider, puis le
 suivant s'il échoue » laisse les autres providers, pourtant configurés, au repos.
 
-    from ricochet import generate, run_parallel
+    from ricochet_llm import generate, run_parallel
 
     def lire(document, provider):                       # exécutée dans un thread
         r = generate(prompt(document), prefer=provider, timeout=60, max_tokens=8192)
