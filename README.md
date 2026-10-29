@@ -1,7 +1,7 @@
 # Ricochet
 
 [![tests](https://github.com/Maxichance/ricochet-llm/actions/workflows/tests.yml/badge.svg)](https://github.com/Maxichance/ricochet-llm/actions/workflows/tests.yml)
-[![licence MIT](https://img.shields.io/badge/licence-MIT-blue.svg)](LICENSE)
+[![licence MIT](https://img.shields.io/badge/licence-MIT-blue.svg)](https://github.com/Maxichance/ricochet-llm/blob/main/LICENSE)
 
 Un routeur qui répartit vos requêtes entre plusieurs API LLM **gratuites** (Groq, NVIDIA NIM, Ollama Cloud, Cloudflare Workers AI, Gonka, OpenRouter, Gemini, Mistral…), bascule tout seul quand un quota est épuisé ou qu'un provider ou un modèle tombe, gère le tool calling, exécute des **traitements par lot en parallèle** sur tous les providers à la fois, et affiche l'état de chaque provider dans un tableau de bord.
 
@@ -134,4 +134,4 @@ Un provider sans clé est ignoré. `NVIDIANIM_API_KEY_EXPIRES=AAAA-MM-JJ` dans `
 
 ## Licence
 
-[MIT](LICENSE). Sécurité et signalement d'une faille : [SECURITY.md](SECURITY.md).
+[MIT](https://github.com/Maxichance/ricochet-llm/blob/main/LICENSE). Sécurité et signalement d'une faille : [SECURITY.md](https://github.com/Maxichance/ricochet-llm/blob/main/SECURITY.md).
