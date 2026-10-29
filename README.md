@@ -195,6 +195,7 @@ Vos outils et votre prompt système peuvent vivre dans un plugin, chargé par le
 - [Recherche Web](https://github.com/Maxichance/ricochet-llm/blob/main/docs/RECHERCHE_WEB.md) : providers retenus et écartés, quotas, ajouter un moteur.
 - [Exemples](https://github.com/Maxichance/ricochet-llm/tree/main/examples) : un plugin d'outils, un usage en bibliothèque.
 - [Journal des versions](https://github.com/Maxichance/ricochet-llm/blob/main/CHANGELOG.md).
+- [Contribuer](https://github.com/Maxichance/ricochet-llm/blob/main/CONTRIBUTING.md) : pull requests et ajout d'un provider.
 
 ## Développement
 
