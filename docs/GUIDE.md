@@ -109,7 +109,7 @@ Certains modèles écrivent leur réponse deux fois (l'objet complet, un guillem
 
 ## 7. Checklist
 
-1. `pip install -r requirements.txt`, créer `.env` depuis `.env.example`, renseigner au moins une clé.
+1. `pip install -e ".[server]"`, créer `.env` depuis `.env.example`, renseigner au moins une clé.
 2. Lancer `python -m ricochet_llm serve --open`, cliquer **Tester** sur chaque carte : clé valide et latence correcte ?
 3. Déclarer vos outils (`@tool`) dans un plugin (`RICOCHET_PLUGIN`) ou dans votre code.
 4. `python -m unittest discover -s tests -v` après toute modification du moteur.

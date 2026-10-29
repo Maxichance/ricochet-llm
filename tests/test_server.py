@@ -1,5 +1,5 @@
 """
-Tests de l'API web (faux providers, aucun réseau). Nécessite `httpx` (requirements-dev.txt).
+Tests de l'API web (faux providers, aucun réseau). Nécessite les extras de développement : pip install -e ".[dev]".
 Lancer :  python -m unittest discover -s tests -v
 """
 import unittest
