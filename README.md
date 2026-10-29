@@ -1,6 +1,6 @@
 <div align="center">
 
-# Ricochet
+<img src="https://raw.githubusercontent.com/Maxichance/ricochet-llm/main/docs/img/banner.png" alt="ricochet-llm" width="560">
 
 **Un seul appel. Plusieurs API gratuites. Zéro quota épuisé.**
 
