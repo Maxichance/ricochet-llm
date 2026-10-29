@@ -206,6 +206,15 @@ python -m unittest discover -s tests -v          # aucun réseau, aucun quota co
 
 Les tests utilisent de faux providers : ils ne consomment rien.
 
+## Avertissements
+
+- **Aucune affiliation.** Ricochet est un projet indépendant. Il n'est ni affilié à, ni approuvé ou sponsorisé par Groq, NVIDIA, Ollama, Cloudflare, OpenRouter, Gonka, Google, Mistral, Cerebras, Exa, Tavily, LangSearch ou tout autre fournisseur cité. Leurs noms et marques appartiennent à leurs propriétaires et ne servent qu'à indiquer la compatibilité.
+- **Conditions des fournisseurs.** Vous êtes seul responsable du respect des conditions d'utilisation et des licences des fournisseurs dont vous utilisez les clés (l'offre d'essai de NVIDIA NIM, par exemple, est limitée à la recherche, au développement et au test). Ricochet utilise une clé par fournisseur et n'est pas conçu pour contourner leurs limites : ne l'utilisez pas pour multiplier les comptes ou les clés, ni pour revendre ou partager un accès.
+- **Les offres changent.** Modèles, quotas, tarifs et conditions des offres gratuites évoluent sans préavis. Les informations de ce dépôt peuvent être périmées, et aucune disponibilité n'est garantie.
+- **Vos données.** Ce que vous envoyez part chez des tiers, parfois hors de l'Union européenne, parfois journalisé ou réutilisé. Vous restez responsable des données que vous transmettez, y compris au regard du RGPD. Le filtre `find_personal_data` est une aide limitée, pas une garantie.
+- **Contenus générés et résultats de recherche.** Les réponses d'un modèle peuvent être inexactes. Les pages renvoyées par la recherche Web appartiennent à leurs auteurs : vous répondez de leur usage.
+- **Aucune garantie.** Le logiciel est fourni « tel quel », sans garantie d'aucune sorte, et son auteur n'est responsable d'aucun dommage lié à son utilisation, dans la limite permise par la loi (voir la licence MIT). Ce dépôt ne constitue pas un conseil juridique.
+
 ## Sécurité et licence
 
 Un signalement de faille se fait en privé : voir [SECURITY.md](https://github.com/Maxichance/ricochet-llm/blob/main/SECURITY.md). Code sous licence [MIT](https://github.com/Maxichance/ricochet-llm/blob/main/LICENSE).
