@@ -3,14 +3,17 @@ Local web server: dashboard (status + quota of each provider), chat console and 
 Run:  python -m ricochet_llm serve        then open http://127.0.0.1:8765
 Listens on localhost only by default: the actions (chat, test, resume) consume quota.
 """
+import hmac
+import json
 import logging
+import os
 import threading
 import time
 from pathlib import Path
-from typing import Dict
+from typing import Dict, Optional
 
-from fastapi import FastAPI
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi import FastAPI, Request
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
@@ -23,6 +26,8 @@ logger = logging.getLogger(__name__)
 WEB_DIR = Path(__file__).resolve().parent / "web"
 NO_STORE = {"Cache-Control": "no-store"}
 MAX_SESSIONS = 200
+SSE_END = chr(10) * 2                       # a blank line ends each server-sent event
+API_KEY_ENV_VAR = "RICOCHET_API_KEY"        # if set, the /v1 endpoints require "Authorization: Bearer <value>"
 
 
 class ChatRequest(BaseModel):
@@ -32,6 +37,29 @@ class ChatRequest(BaseModel):
 
 class ResetRequest(BaseModel):
     session_id: str = Field(min_length=1, max_length=100)
+
+
+def _openai_error(message: str, status: int, kind: str = "invalid_request_error") -> JSONResponse:
+    return JSONResponse({"error": {"message": message, "type": kind}}, status_code=status)
+
+
+def _stream_chunks(result: dict):
+    """The finished completion as OpenAI-style SSE chunks. The router needs the whole answer to tell a good one from
+    an empty one before failing over, so the stream delivers it in one piece, then the end marker."""
+    choice = result["choices"][0]
+    message = choice["message"]
+    base = {"id": result["id"], "object": "chat.completion.chunk", "created": result["created"],
+            "model": result["model"]}
+    delta: dict = {"role": "assistant"}
+    if message.get("content"):
+        delta["content"] = message["content"]
+    if message.get("tool_calls"):
+        delta["tool_calls"] = [{"index": i, **tc} for i, tc in enumerate(message["tool_calls"])]
+    first = {**base, "choices": [{"index": 0, "delta": delta, "finish_reason": None}]}
+    last = {**base, "choices": [{"index": 0, "delta": {}, "finish_reason": choice["finish_reason"]}]}
+    for chunk in (first, last):
+        yield f"data: {json.dumps(chunk)}" + SSE_END
+    yield "data: [DONE]" + SSE_END
 
 
 def create_app() -> FastAPI:
@@ -118,6 +146,61 @@ def create_app() -> FastAPI:
                                 status_code=404)
         router.reset_provider(name)
         return {"status": "ok"}
+
+    def key_refused(request: Request) -> Optional[JSONResponse]:
+        key = os.getenv(API_KEY_ENV_VAR, "")
+        if key and not hmac.compare_digest(request.headers.get("authorization", ""), f"Bearer {key}"):
+            return _openai_error("Invalid or missing API key.", 401, "authentication_error")
+        return None
+
+    @app.get("/v1/models")
+    async def v1_models(request: Request):
+        """OpenAI-compatible model list: `auto` (any provider) and one entry per configured provider."""
+        refused = key_refused(request)
+        if refused:
+            return refused
+        names = ["auto"] + router.provider_names()
+        return {"object": "list", "data": [{"id": n, "object": "model", "created": int(started), "owned_by": "ricochet"}
+                                           for n in names]}
+
+    @app.post("/v1/chat/completions")
+    async def v1_chat_completions(request: Request):
+        """OpenAI-compatible chat completions with failover. `model` is `auto` (or anything) to use every provider,
+        or a provider name to restrict the call to it. Tools are the caller's: tool calls come back unexecuted."""
+        refused = key_refused(request)
+        if refused:
+            return refused
+        try:
+            body = await request.json()
+        except ValueError:
+            return _openai_error("The body must be JSON.", 400)
+        messages = body.get("messages") if isinstance(body, dict) else None
+        if (not isinstance(messages, list) or not messages
+                or not all(isinstance(m, dict) and isinstance(m.get("role"), str) for m in messages)):
+            return _openai_error("`messages` must be a non-empty list of {role, content} objects.", 400)
+        tools = body.get("tools")
+        if tools is not None and not isinstance(tools, list):
+            return _openai_error("`tools` must be a list.", 400)
+        limit = body.get("max_tokens") or body.get("max_completion_tokens") or 4096
+        temperature = body.get("temperature")
+        if (not isinstance(limit, int) or isinstance(limit, bool) or limit < 1
+                or not (temperature is None or isinstance(temperature, (int, float)))):
+            return _openai_error("`max_tokens` must be a positive integer and `temperature` a number.", 400)
+        model = body.get("model")
+        options = {k: body[k] for k in router.PASSTHROUGH_PARAMS if k in body}
+        try:
+            result = await run_in_threadpool(lambda: router.complete(
+                messages, tools=tools or None, tool_choice=body.get("tool_choice"), max_tokens=limit,
+                temperature=0.2 if temperature is None else temperature,
+                only=[model] if model in router.provider_names() else None, **options))
+        except router.LLMRouterError as e:
+            return _openai_error(str(e), 503, "server_error")
+        except Exception as e:
+            logger.exception("Error during /v1/chat/completions")
+            return _openai_error(f"LLM error: {str(e)[:300]}", 500, "server_error")
+        if body.get("stream"):
+            return StreamingResponse(_stream_chunks(result), media_type="text/event-stream", headers=NO_STORE)
+        return JSONResponse(result, headers=NO_STORE)
 
     app.mount("/static", StaticFiles(directory=WEB_DIR), name="static")
     return app

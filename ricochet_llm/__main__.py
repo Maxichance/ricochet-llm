@@ -64,8 +64,8 @@ def _serve(host: str, port: int, open_browser: bool, allow_remote: bool) -> int:
         return 1
 
     if host not in _LOCAL_HOSTS and not allow_remote:
-        print(f"Refused: listening on {host} exposes the dashboard (no authentication) to the network.\n"
-              "Add --allow-remote if that is intended, preferably behind an authenticated proxy.", file=sys.stderr)
+        print(f"Refused: listening on {host} exposes the dashboard and the /v1 API to the network.\n"
+              "Add --allow-remote if that is intended, set RICOCHET_API_KEY to protect /v1, and keep the dashboard behind an authenticated proxy.", file=sys.stderr)
         return 2
     url = f"http://{host}:{port}"
     print(f"Dashboard: {url}   (Ctrl+C to stop)")
@@ -95,7 +95,7 @@ def main(argv=None) -> int:
     serve.add_argument("--host", default="127.0.0.1", help="127.0.0.1 by default (local only)")
     serve.add_argument("--port", type=int, default=8765)
     serve.add_argument("--open", action="store_true", help="open the browser")
-    serve.add_argument("--allow-remote", action="store_true", help="allow a non-local --host (no authentication!)")
+    serve.add_argument("--allow-remote", action="store_true", help="allow a non-local --host (the dashboard has no authentication)")
     sub.add_parser("status", help="provider status")
     chat = sub.add_parser("chat", help="ask a question")
     chat.add_argument("message")

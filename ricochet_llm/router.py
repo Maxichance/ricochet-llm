@@ -6,6 +6,8 @@ and keeps the observable state (quotas, cooldowns, statistics, event log) shown 
 Pure data            : catalog.py (providers), cleaning.py (cleanup)
 Application side     : tools.py (tool registry) + set_system_prompt(), loaded via plugins.py
 """
+import atexit
+import json
 import logging
 import os
 import random
@@ -15,6 +17,7 @@ import time
 from collections import deque
 from dataclasses import asdict, dataclass, field
 from datetime import date
+from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 import openai
@@ -52,6 +55,8 @@ SIZE_MARGIN           = 0.9    # the token estimate slightly overestimates: keep
 QUOTA_STALE_S         = 300    # a quota read more than 5 min ago is considered "unknown" and probed again
 PROBE_MAX_AGE_S       = 60     # max age of a quota probe (e.g. OpenRouter /key) before re-reading
 EVENTS_KEPT           = 200
+STATE_ENV_VAR         = "RICOCHET_STATE"   # path of a JSON file: pauses and learned limits survive a restart (opt-in)
+STATE_WRITE_GAP_S     = 2.0               # at most one write every 2 s; the last changes are flushed at exit
 
 DEFAULT_SYSTEM_PROMPT = "You are an assistant. You answer clearly and in a structured way."
 _system_prompt = DEFAULT_SYSTEM_PROMPT
@@ -174,6 +179,118 @@ def _reset_state() -> None:
 _reset_state()
 
 
+# ============================================================
+# STATE THAT SURVIVES A RESTART (opt-in: RICOCHET_STATE=path/to/state.json)
+# ============================================================
+# Without it, a restart forgets every pause and sends the first calls to providers that were out of quota.
+# Only what costs a wasted call is kept: provider pauses, model pauses, learned token limits. Pauses are stored as
+# wall-clock times (the monotonic clock does not outlive the process) and are dropped once over.
+
+_state_lock = threading.Lock()
+_state_written = 0.0
+_state_dirty = False
+
+
+def _state_file() -> Optional[Path]:
+    value = os.getenv(STATE_ENV_VAR, "").strip()
+    return Path(value).expanduser() if value else None
+
+
+def _snapshot() -> dict:
+    now, wall = _now(), time.time()
+    with _quota_lock:
+        providers = {n: {"until": wall + (u - now), "error": _provider_last_error.get(n)}
+                     for n, u in _provider_cooldown_until.items() if u > now}
+        models = [{"provider": p, "model": m, "until": wall + (u - now)}
+                  for (p, m), u in _model_cooldown_until.items() if u > now]
+        limits = [{"provider": p, "model": m, "tokens": n} for (p, m), n in _model_limit.items()]
+    return {"saved_at": wall, "providers": providers, "models": models, "limits": limits}
+
+
+def save_state() -> bool:
+    """Write the state file now (no-op without RICOCHET_STATE). Returns True if a file was written."""
+    global _state_written, _state_dirty
+    path = _state_file()
+    if path is None:
+        return False
+    data = json.dumps(_snapshot(), indent=1)
+    with _state_lock:
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = path.with_name(path.name + ".tmp")
+            tmp.write_text(data, encoding="utf-8")
+            os.replace(tmp, path)
+        except OSError as e:
+            logger.warning("State file not written (%s): %s", path, e)
+            return False
+        _state_written, _state_dirty = time.time(), False
+    return True
+
+
+def _state_changed() -> None:
+    """Something worth keeping changed: write soon (rate-limited)."""
+    global _state_dirty
+    if _state_file() is None:
+        return
+    if time.time() - _state_written >= STATE_WRITE_GAP_S:
+        save_state()
+    else:
+        _state_dirty = True
+
+
+def _flush_state() -> None:
+    if _state_dirty:
+        save_state()
+
+
+def load_state() -> bool:
+    """Restore pauses and learned limits from the state file. Entries for unknown providers, finished pauses and
+    malformed entries are ignored. Returns True if a file was read."""
+    path = _state_file()
+    if path is None or not path.is_file():
+        return False
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as e:
+        logger.warning("State file ignored (%s): %s", path, e)
+        return False
+    if not isinstance(data, dict):
+        return False
+    now, wall = _now(), time.time()
+    known = {p["name"] for p in _PROVIDERS}
+
+    def left(until) -> float:
+        return min(float(until) - wall, COOLDOWN_MAX_S)
+
+    with _quota_lock:
+        for name, entry in (data.get("providers") or {}).items():
+            try:
+                if name in known and left(entry["until"]) > 0:
+                    _provider_cooldown_until[name] = now + left(entry["until"])
+                    _provider_remaining[name] = 0
+                    _provider_seen[name] = now
+                    _provider_last_error[name] = str(entry.get("error") or "")[:200] or None
+            except (KeyError, TypeError, ValueError, AttributeError):
+                continue
+        for entry in data.get("models") or []:
+            try:
+                if entry["provider"] in known and left(entry["until"]) > 0:
+                    _model_cooldown_until[(entry["provider"], str(entry["model"]))] = now + left(entry["until"])
+            except (KeyError, TypeError, ValueError):
+                continue
+        for entry in data.get("limits") or []:
+            try:
+                if entry["provider"] in known and int(entry["tokens"]) > 0:
+                    _model_limit[(entry["provider"], str(entry["model"]))] = int(entry["tokens"])
+            except (KeyError, TypeError, ValueError):
+                continue
+    return True
+
+
+load_state()
+atexit.register(_flush_state)
+
+
 def _record_event(provider: str, kind: str, message: str) -> None:
     with _events_lock:
         _events.append({"t": time.time(), "provider": provider, "kind": kind, "message": message[:240]})
@@ -269,14 +386,19 @@ def _note_budget(provider_name: str, model: str, headers) -> None:
     limit = headers.get("x-ratelimit-limit-tokens")
     remaining = headers.get("x-ratelimit-remaining-tokens")
     delay = _duration_text(headers.get("x-ratelimit-reset-tokens"))
+    changed = False
     with _quota_lock:
         try:
             if limit is not None:
-                _model_limit[key] = int(float(limit))
+                learned = int(float(limit))
+                changed = _model_limit.get(key) != learned
+                _model_limit[key] = learned
             if remaining is not None and delay is not None:
                 _model_budget[key] = (int(float(remaining)), _now() + delay)
         except (TypeError, ValueError):
             return
+    if changed:
+        _state_changed()
 
 
 def _put_in_cooldown(provider_name: str, seconds: float, exhausted: bool = False, reason: str = "") -> None:
@@ -289,6 +411,7 @@ def _put_in_cooldown(provider_name: str, seconds: float, exhausted: bool = False
         if reason:
             _provider_last_error[provider_name] = reason[:200]
     logger.warning("LLM %s unavailable for %.0fs (%s)", provider_name, seconds, reason[:120])
+    _state_changed()
 
 
 def _mark_provider_exhausted(provider_name: str, cooldown: float = COOLDOWN_RATE_LIMIT_S, reason: str = "") -> None:
@@ -299,6 +422,7 @@ def _clear_cooldown(provider_name: str) -> None:
     with _quota_lock:
         _provider_cooldown_until[provider_name] = 0.0
         _provider_remaining[provider_name] = None
+    _state_changed()
 
 
 def _refresh_locked(now: float) -> None:
@@ -366,6 +490,7 @@ def _bench_model(provider: dict, model: str, seconds: float, reason: str) -> Non
         _provider_last_error[provider["name"]] = reason[:200]
     _record_event(provider["name"], "model_paused", f"{model} set aside {seconds:.0f}s: {reason}"[:240])
     logger.warning("LLM %s / %s set aside for %.0fs (%s)", provider["name"], model, seconds, reason[:120])
+    _state_changed()
 
 
 def _other_model_usable(provider: dict, model: str, need_tokens: int = 0) -> bool:
@@ -997,20 +1122,53 @@ def generate(prompt, system: Optional[str] = None, *, max_tokens: int = 4096, te
     An EMPTY answer is never returned: the model is set aside and the next one tried. Raises LLMRouterError if nothing
     can answer any more. Checking the CONTENT (valid JSON, quotes found in the source) is left to the caller:
     a valid but empty JSON is indistinguishable from a real absence."""
+    done = _run_completion(_messages_for(prompt, system), max_tokens=max_tokens, temperature=temperature,
+                           timeout=timeout, only=only, prefer=prefer)
+    choice = done.response.choices[0]
+    usage = getattr(done.response, "usage", None)
+    return GenerateResult(
+        text=done.text, provider=done.provider, model=done.model, mode=done.mode, latency_ms=done.latency_ms,
+        tokens_in=getattr(usage, "prompt_tokens", None), tokens_out=getattr(usage, "completion_tokens", None),
+        finish_reason=choice.finish_reason, truncated=choice.finish_reason == "length",
+        reasoning_used=done.reasoning, trail=done.trail)
+
+
+@dataclass
+class _Completion:
+    """What `_run_completion` found: the provider's response, the cleaned text and how it was obtained."""
+    response: object
+    text: str
+    provider: str
+    model: str
+    mode: str
+    latency_ms: int
+    reasoning: bool
+    trail: List[dict]
+
+
+def _run_completion(messages: list, *, max_tokens: int, temperature: float, timeout: Optional[float] = None,
+                    only=None, prefer: Optional[str] = None, tools: Optional[list] = None,
+                    tool_choice=None, params: Optional[dict] = None) -> _Completion:
+    """The failover loop shared by `generate` and `complete`. With `tools`, only providers that handle tools are used
+    and an answer made of tool calls is a valid answer; without, an empty answer is set aside and the next model tried."""
     t_start = time.perf_counter()
-    messages = _messages_for(prompt, system)
     need = _estimate_tokens(messages)
     excluded: set = set()
     retries: Dict[str, int] = {}
     trail: List[dict] = []
-    provider, model, mode = _choose_provider_and_model(excluded, need_tokens=need, only=only, prefer=prefer)
+    wants_tools = bool(tools)
+    provider, model, mode = _choose_provider_and_model(excluded, wants_tools, need, only=only, prefer=prefer)
 
     while True:
         t_call = time.perf_counter()
         try:
-            raw = _client_for(provider, timeout).chat.completions.with_raw_response.create(
-                model=model, messages=messages, max_tokens=max_tokens, temperature=temperature,
-                **_call_options(provider, model))
+            kwargs = dict(model=model, messages=messages, max_tokens=max_tokens, temperature=temperature,
+                          **_call_options(provider, model), **(params or {}))
+            if wants_tools:
+                kwargs["tools"] = tools
+                if tool_choice is not None:
+                    kwargs["tool_choice"] = tool_choice
+            raw = _client_for(provider, timeout).chat.completions.with_raw_response.create(**kwargs)
             _update_quota_from_headers(provider["name"], raw.headers)
             _note_budget(provider["name"], model, raw.headers)
             response = raw.parse()
@@ -1021,7 +1179,7 @@ def generate(prompt, system: Optional[str] = None, *, max_tokens: int = 4096, te
                           "detail": _describe_error(e)[:160]})
             if kind != "model_limited" and provider["name"] not in excluded:
                 continue
-            provider, model, mode = _choose_provider_and_model(excluded, need_tokens=need, only=only, prefer=prefer)
+            provider, model, mode = _choose_provider_and_model(excluded, wants_tools, need, only=only, prefer=prefer)
             continue
 
         if not response.choices:
@@ -1030,7 +1188,7 @@ def generate(prompt, system: Optional[str] = None, *, max_tokens: int = 4096, te
             trail.append({"provider": provider["name"], "model": model, "outcome": "no_choices", "detail": "response without choices"})
             _mark_provider_exhausted(provider["name"], COOLDOWN_RATE_LIMIT_S, "response without choices")
             excluded.add(provider["name"])
-            provider, model, mode = _choose_provider_and_model(excluded, need_tokens=need, only=only, prefer=prefer)
+            provider, model, mode = _choose_provider_and_model(excluded, wants_tools, need, only=only, prefer=prefer)
             continue
 
         choice = response.choices[0]
@@ -1038,25 +1196,63 @@ def generate(prompt, system: Optional[str] = None, *, max_tokens: int = 4096, te
         text = cleaning.strip_think(message.content or "")
         reasoning = bool(getattr(message, "reasoning_content", None)
                          or (getattr(message, "model_extra", None) or {}).get("reasoning_content"))
-        if not text:
+        if not text and not (wants_tools and getattr(message, "tool_calls", None)):
             _record_call_result(provider["name"], False, time.perf_counter() - t_call)
             why = ("max_tokens reached during reasoning" if choice.finish_reason == "length" and reasoning
                    else "reasoning without an answer" if reasoning else "empty response")
             _record_event(provider["name"], "empty", f"{model} : {why}")
             trail.append({"provider": provider["name"], "model": model, "outcome": "empty", "detail": why})
             _handle_empty_answer(provider, model, excluded, need)
-            provider, model, mode = _choose_provider_and_model(excluded, need_tokens=need, only=only, prefer=prefer)
+            provider, model, mode = _choose_provider_and_model(excluded, wants_tools, need, only=only, prefer=prefer)
             continue
 
-        usage = getattr(response, "usage", None)
         _record_call_result(provider["name"], True, time.perf_counter() - t_call, _usage_tokens(response))
         latency_ms = int((time.perf_counter() - t_start) * 1000)
         _record_event(provider["name"], "ok", f"{model} · {mode} · {latency_ms} ms")
-        return GenerateResult(
-            text=text, provider=provider["name"], model=model, mode=mode, latency_ms=latency_ms,
-            tokens_in=getattr(usage, "prompt_tokens", None), tokens_out=getattr(usage, "completion_tokens", None),
-            finish_reason=choice.finish_reason, truncated=choice.finish_reason == "length",
-            reasoning_used=reasoning, trail=trail)
+        return _Completion(response=response, text=text, provider=provider["name"], model=model, mode=mode,
+                           latency_ms=latency_ms, reasoning=reasoning, trail=trail)
+
+
+# Request parameters that `complete` passes through to the provider as they are.
+PASSTHROUGH_PARAMS = ("top_p", "stop", "seed", "presence_penalty", "frequency_penalty", "response_format")
+
+
+def complete(messages: list, *, tools: Optional[list] = None, tool_choice=None, max_tokens: int = 4096,
+             temperature: float = 0.2, timeout: Optional[float] = None, only=None, prefer: Optional[str] = None,
+             **params) -> dict:
+    """A chat completion in the OpenAI response format, with failover between providers and models.
+
+    Unlike `chat`, the caller owns the conversation AND the tools: `messages` and `tools` go to the provider as they
+    are, and tool calls come back to the caller instead of being run here. With `tools`, only providers that handle
+    tool calling are used. Extra keyword arguments among PASSTHROUGH_PARAMS are forwarded.
+    The result carries an `x_ricochet` field: provider, model, mode, latency and failovers."""
+    unknown = sorted(set(params) - set(PASSTHROUGH_PARAMS))
+    if unknown:
+        raise TypeError(f"unsupported parameter(s): {', '.join(unknown)}")
+    done = _run_completion(list(messages), max_tokens=max_tokens, temperature=temperature, timeout=timeout,
+                           only=only, prefer=prefer, tools=tools, tool_choice=tool_choice,
+                           params={k: v for k, v in params.items() if v is not None})
+    choice = done.response.choices[0]
+    tool_calls = [{"id": tc.id, "type": "function",
+                   "function": {"name": tc.function.name, "arguments": tc.function.arguments}}
+                  for tc in (getattr(choice.message, "tool_calls", None) or [])] if tools else []
+    message: dict = {"role": "assistant", "content": done.text or None}
+    if tool_calls:
+        message["tool_calls"] = tool_calls
+    usage = getattr(done.response, "usage", None)
+    prompt_tokens = getattr(usage, "prompt_tokens", 0) or 0
+    completion_tokens = getattr(usage, "completion_tokens", 0) or 0
+    return {
+        "id": f"chatcmpl-{random.getrandbits(64):016x}",
+        "object": "chat.completion",
+        "created": int(time.time()),
+        "model": done.model,
+        "choices": [{"index": 0, "message": message, "finish_reason": choice.finish_reason or "stop"}],
+        "usage": {"prompt_tokens": prompt_tokens, "completion_tokens": completion_tokens,
+                  "total_tokens": getattr(usage, "total_tokens", None) or prompt_tokens + completion_tokens},
+        "x_ricochet": {"provider": done.provider, "model": done.model, "mode": done.mode,
+                       "latency_ms": done.latency_ms, "trail": done.trail},
+    }
 
 
 # ============================================================

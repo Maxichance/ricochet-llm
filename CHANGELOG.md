@@ -9,7 +9,11 @@ Lessons from real-provider usage since 0.4.0.
 - **`read_json`**: tolerant reading of a JSON answer (written twice, extra field, stray `null`) that never guesses at a truncated answer.
 - **`find_personal_data` / `check_conversation`**: spots emails, phone numbers, IBANs, card numbers and social security numbers (check digits) before sending to a free tier.
 - `<think>...</think>` blocks are no longer returned as the answer. Gemini: chain `gemini-3.6-flash`, `3.5-flash`, `3.1-pro-preview`. Gonka now comes after OpenRouter. `RICOCHET_ORDER` sets the head of the list without a file. `httpx` becomes a direct dependency.
-- 212 tests (no network).
+- **OpenAI-compatible endpoint**: `/v1/chat/completions` (with `tools`, `stream`) and `/v1/models` in the server, `complete()` in the library, optional `RICOCHET_API_KEY`. The failover loop of `generate` is now shared with `complete`.
+- **Async**: `achat`, `achat_detailed`, `agenerate`, `acomplete`.
+- **Persistent state** (opt-in, `RICOCHET_STATE`): provider pauses, model pauses and learned token limits survive a restart.
+- `py.typed`, issue templates, Dependabot, CI on Linux, Windows and macOS.
+- 235 tests (no network).
 - Out of scope: the native Gemini client (tool calls and live streaming, `thoughtSignature`), which assumes an async loop and a Gemini-specific format; Gemini is still called in OpenAI format, without tools.
 
 ## 0.4.0

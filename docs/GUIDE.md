@@ -107,6 +107,13 @@ summary = run_parallel(documents, read, limits={"nvidia": 10})
 
 Some models write their answer twice (the complete object, a quote mark, a second copy), follow it with an extra field (`...}}"products":[]}`) or slip a `null` between two key/value pairs. `read_json(text)` reads strictly first (unchanged for a valid answer), then only on failure keeps the first complete object. A truncated answer (`max_tokens`) or one that loops stays `None`: read it again. It says nothing about the **content**: valid JSON can contain made-up values, and the substantive check (is the quote in the source?) remains up to you.
 
+## 6 ter. OpenAI-compatible endpoint, async and persistent state
+
+- **`complete(messages, tools=..., ...)`** is the entry point for callers that own the conversation: messages and tools go to the provider as they are, tool calls come back unexecuted, and the result is an OpenAI-format dict with an extra `x_ricochet` field (provider, model, mode, latency, failovers). With `tools`, only providers with `supports_tools` are used. Extra parameters (`top_p`, `stop`, `seed`, `presence_penalty`, `frequency_penalty`, `response_format`) are forwarded; anything else raises `TypeError`. `chat` and `generate` stay the right choice when Ricochet should own the history and run `@tool` functions itself.
+- **`/v1/chat/completions` and `/v1/models`** (in `server.py`) wrap `complete`. `model` is `auto`, or a provider name to restrict the call. Request errors use the OpenAI error format (400, 401, 503). `stream=true` is answered with SSE chunks, but the router needs the complete answer to detect an empty one and fail over, so the content arrives in a single chunk, followed by the end marker. Set `RICOCHET_API_KEY` to require a bearer token on `/v1` (the dashboard API is not covered: keep it local or behind a proxy).
+- **Async**: `achat`, `achat_detailed`, `agenerate`, `acomplete` (module `aio.py`) run the synchronous functions in a worker thread with `asyncio.to_thread`: no second code path, same failover.
+- **Persistent state**: with `RICOCHET_STATE=path`, `router.py` writes provider pauses, model pauses and learned token limits to a JSON file (at most every 2 s, and at exit) and reads them back at import. Times are stored as wall-clock times; pauses already over, unknown providers and malformed entries are dropped on load. `save_state()` and `load_state()` are public for tests and tooling.
+
 ## 7. Checklist
 
 1. `pip install -e ".[server]"`, create `.env` from `.env.example`, fill in at least one key.

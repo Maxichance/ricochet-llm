@@ -50,6 +50,8 @@ Ricochet puts all of it behind **a single interface**. It picks the provider and
 |---|---|
 | **Automatic failover** | Per provider **and per model**: a 429 only sets one model aside, and a provider is paused only once none of its models answers. Refusals are classified (quota, plan not enabled, daily cap, key to fix) with the right pause length. |
 | **Quota tracking** | Token budget read from response headers, learned limits, no call wasted on a model that is about to refuse. |
+| **OpenAI-compatible endpoint** | `ricochet-llm serve` also exposes `/v1/chat/completions` and `/v1/models`: any OpenAI SDK or tool can point at Ricochet and get the failover, with its own tools, `stream=true` and an optional API key. |
+| **Async and restart-proof** | `achat`, `agenerate`, `acomplete` for asyncio code. With `RICOCHET_STATE`, pauses and learned limits survive a restart. |
 | **Tool calling** | Describe a Python function with `@tool` and the JSON schema is inferred. Tool errors are sent back to the model instead of crashing the conversation. |
 | **Parallel batch reading** | `run_parallel` gives each provider its own workers, with a concurrency cap and a delay between starts matched to its limits. |
 | **Free web search** | Exa, Tavily and LangSearch behind one interface, quota tracked on disk, stop at 90% of the free allowance. A ready-made tool for your models. |
@@ -125,6 +127,30 @@ summary = run_parallel(documents, read, limits={"nvidia": 10})
 
 `generate` never returns an empty answer, accepts a longer timeout than chat and fails over between providers and between models. `run_parallel` stops cleanly when no provider is left and hands back what remains.
 
+### As an OpenAI-compatible endpoint
+
+Start `ricochet-llm serve`, then point any OpenAI client at it. `model` is `auto` (every provider) or a provider name (`groq`) to restrict the call; messages and tools are yours, tool calls come back to you.
+
+```python
+from openai import OpenAI
+
+client = OpenAI(base_url="http://127.0.0.1:8765/v1", api_key="unused")     # the key only matters if RICOCHET_API_KEY is set
+r = client.chat.completions.create(model="auto", messages=[{"role": "user", "content": "Hello!"}])
+print(r.choices[0].message.content)
+print(r.model_extra["x_ricochet"]["provider"])               # who answered, with the failovers on the way
+```
+
+`stream=true` works, but the answer arrives in one piece: the router needs the whole answer to tell a good one from an empty one before it fails over. If you listen beyond localhost (`--allow-remote`), set `RICOCHET_API_KEY` to protect `/v1`.
+
+### From asyncio
+
+```python
+from ricochet_llm import achat, agenerate, acomplete
+
+answer = await achat(history, "Hello!")                     # same functions, run in a worker thread
+result = await agenerate("Summarize...", max_tokens=1024)
+```
+
 ### Search the web, read imperfect JSON, protect data
 
 ```python
@@ -186,6 +212,8 @@ Copy `providers.example.json` to `providers.json` (or point to it with `RICOCHET
 ```
 
 The file is validated: a typo gives an explicit error. Without a file, `RICOCHET_ORDER=groq,gemini` changes the head of the list. All fields (fallback models, per-model options, token limits, concurrency cap...) are documented at the top of [`ricochet_llm/catalog.py`](https://github.com/Maxichance/ricochet-llm/blob/main/ricochet_llm/catalog.py).
+
+`RICOCHET_STATE=path/to/state.json` keeps provider pauses, model pauses and learned token limits across restarts (off by default). `RICOCHET_API_KEY` protects the `/v1` endpoints.
 
 Your tools and your system prompt can live in a plugin, loaded by the server and the command line: `RICOCHET_PLUGIN=examples/demo_tools.py`. A plugin is code run as is: only load code you trust.
 
