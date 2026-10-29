@@ -1,36 +1,32 @@
 # Contribuer
 
-Les contributions sont bienvenues : correctifs, tests, documentation, nouveaux providers.
+Le projet est collaboratif : tout le monde peut le faire évoluer, y compris en profondeur. Nouveaux providers, nouveaux modèles, autres formats d'API, autres stratégies de routage, correctifs, tests, documentation : proposez, on en discute.
 
 ## Proposer une modification
 
 1. Faites un fork du dépôt, puis créez une branche.
 2. Installez le projet : `pip install -e ".[dev]" ruff`.
-3. Vérifiez avant d'ouvrir la pull request :
+3. Avant d'ouvrir la pull request :
    ```
    ruff check .
    python -m unittest discover -s tests -v
    ```
-4. Ouvrez une pull request vers `main`. Rien n'est fusionné sans relecture du mainteneur.
+4. Ouvrez une pull request vers `main`.
 
-Pour un changement important, ouvrez d'abord une issue.
+Pour un changement important, une issue au préalable permet d'en parler avant d'écrire le code, mais ce n'est pas obligatoire.
 
-## Ajouter un provider
+## Providers et modèles
 
 - **Pour votre usage** : un fichier `providers.json` suffit, sans modifier le code (voir `providers.example.json` et [docs/GUIDE.md](docs/GUIDE.md), section 3).
-- **Pour le proposer au dépôt** : ajoutez-le à `ricochet_llm/catalog.py`, avec un test.
+- **Pour le partager** : ajoutez-le à `ricochet_llm/catalog.py`, ou changez les chaînes de modèles existantes.
+- **Une API qui n'est pas compatible OpenAI** est la bienvenue aussi : le routeur parle aujourd'hui ce format, un adaptateur pour un autre format est un bon sujet de contribution.
 
-Un provider proposé doit :
-- exposer une API compatible OpenAI ;
-- avoir une offre gratuite dont les conditions d'utilisation autorisent cet usage ;
-- avoir été testé par un vrai appel (`python -m ricochet_llm models <provider>`), la liste `/models` n'étant pas fiable.
+Un conseil : testez par un vrai appel avant de proposer (`python -m ricochet_llm models <provider>`), la liste `/models` d'un provider n'étant pas toujours fiable. Et vérifiez que les conditions d'utilisation de l'offre gratuite permettent cet usage.
 
-## Règles
+## À respecter
 
 - Tout ce qui est commité est public : **aucune clé, aucun `.env`, aucune donnée personnelle**.
-- Pas de mesures, de captures ou de récits d'essais dans le dépôt : il décrit l'outil.
-- Messages de commit courts, à l'impératif ou au présent.
-- Ajoutez ou adaptez les tests ; la CI doit passer sur Python 3.9 et 3.12.
+- La CI doit passer (Python 3.9 et 3.12).
 - Les failles de sécurité ne se signalent pas dans une issue publique : voir [SECURITY.md](SECURITY.md).
 
 ## Licence
